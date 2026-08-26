@@ -135,10 +135,32 @@ export async function loadFeed(feedUrl) {
   );
 }
 
-/** fyyd is keyless and CORS-open, but its Tamil index is tiny — a bonus, not the main route. */
+/**
+ * Apple's directory has the real Tamil coverage but no CORS, so it's reached
+ * through our proxy. fyyd is keyless and CORS-open, so it still works when the
+ * proxy isn't deployed — its Tamil index is just tiny.
+ */
 export async function searchPodcasts(query) {
   const q = query.trim();
   if (!q) return [];
+
+  try {
+    const res = await fetch(`/api/podcasts?term=${encodeURIComponent(q)}`);
+    if (res.headers.get("content-type")?.includes("application/json")) {
+      const body = await res.json();
+      if (res.ok && body.shows?.length) {
+        return body.shows.map((s) => ({
+          title: s.title,
+          feed: s.feed,
+          image: s.image,
+          note: [s.author, s.episodes ? `${s.episodes} episodes` : ""].filter(Boolean).join(" · "),
+        }));
+      }
+    }
+  } catch {
+    // proxy not deployed or unreachable — fall through
+  }
+
   const res = await fetch(`https://api.fyyd.de/0.2/search/podcast?title=${encodeURIComponent(q)}&count=40`);
   if (!res.ok) throw new Error(`Podcast search failed (${res.status})`);
   const { data = [] } = await res.json();

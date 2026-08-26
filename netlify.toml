@@ -15,6 +15,12 @@
   to = "/.netlify/functions/feed"
   status = 200
 
+# Apple's podcast directory, which also sends no CORS headers.
+[[redirects]]
+  from = "/api/podcasts"
+  to = "/.netlify/functions/podcastsearch"
+  status = 200
+
 [[headers]]
   for = "/sw.js"
   [headers.values]
