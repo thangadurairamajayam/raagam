@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
-import { Play, Pause, SkipBack, SkipForward, Heart, Search, Home, Volume2, VolumeX, Music2, Disc3, UserRound, Tags, FolderPlus, Globe, Loader2, ArrowLeft, ShieldCheck, ShieldAlert, Clapperboard, RadioTower, Shuffle, Repeat, Repeat1, ListMusic, Plus, Trash2, ListPlus, Youtube, KeyRound, Share2, Download, Film, History, Moon, Mic, Rss } from "lucide-react";
+import { Play, Pause, SkipBack, SkipForward, Heart, Search, Home, Volume2, VolumeX, Music2, Disc3, UserRound, Tags, FolderPlus, Globe, Loader2, ArrowLeft, ShieldCheck, ShieldAlert, Clapperboard, RadioTower, Shuffle, Repeat, Repeat1, ListMusic, Plus, Trash2, ListPlus, Youtube, KeyRound, Share2, Download, Film, History, Moon, Mic, Rss, ChevronDown, ChevronUp } from "lucide-react";
 
 import { pickLocalFiles, buildLocalTracks } from "./lib/localLibrary.js";
 import {
@@ -21,6 +21,8 @@ import {
   youtubeSearchUrl, hasSharedKey,
 } from "./lib/youtube.js";
 import { lookupCover } from "./lib/coverArt.js";
+import { fetchLyrics, activeLineAt } from "./lib/lyrics.js";
+import { dominantColour } from "./lib/colour.js";
 import { ACTOR_NAMES, DIRECTOR_NAMES } from "./lib/metadata.js";
 import { FILMS, DECADES, decadeOf, filmsBy, soundtrackQuery, STORES } from "./lib/films.js";
 import { searchNormalise } from "./lib/tamil.js";
@@ -179,7 +181,69 @@ const STYLES = `
   padding: 10px 18px calc(10px + env(safe-area-inset-bottom)) 18px; gap: 16px;
 }
 .sur-np { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.sur-vinyl-wrap { position: relative; width: 46px; height: 46px; flex-shrink: 0; }
+.sur-vinyl-wrap { position: relative; width: 46px; height: 46px; flex-shrink: 0; cursor: pointer; }
+
+/* ---- full-screen now playing ---- */
+.sur-now {
+  position: fixed; inset: 0; z-index: 60;
+  background: var(--bg);
+  display: grid; grid-template-rows: auto 1fr auto;
+  animation: sur-rise .28s cubic-bezier(.2,.8,.3,1);
+}
+@keyframes sur-rise { from { transform: translateY(100%); } to { transform: translateY(0); } }
+/* Tint comes from the cover art; --np-h is set inline per track. */
+.sur-now::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(120% 80% at 50% -10%, hsl(var(--np-h, 280) 60% 32% / 0.85), transparent 70%),
+    linear-gradient(180deg, hsl(var(--np-h, 280) 40% 18% / 0.9), var(--bg) 60%);
+}
+.sur-now > * { position: relative; }
+.sur-now-top { display: flex; align-items: center; gap: 12px; padding: 16px 22px; }
+.sur-now-top .label { flex: 1; font-size: 11px; letter-spacing: 1.4px; text-transform: uppercase; color: var(--muted); text-align: center; }
+.sur-now-body { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 40px; padding: 0 40px; overflow: hidden; align-items: center; }
+.sur-now-art {
+  justify-self: end; width: min(46vh, 100%); aspect-ratio: 1;
+  border-radius: 14px; overflow: hidden; box-shadow: 0 24px 60px rgba(0,0,0,.5);
+}
+.sur-now-side { display: flex; flex-direction: column; min-width: 0; height: min(46vh, 100%); }
+.sur-now-title { font-size: 30px; margin: 0 0 6px; line-height: 1.15; }
+.sur-now-artist { color: var(--muted); font-size: 15px; margin: 0 0 4px; }
+.sur-now-album { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
+.sur-now-tabs { display: flex; gap: 6px; margin-bottom: 14px; flex-shrink: 0; }
+.sur-tab {
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  font-size: 13px; font-weight: 600; padding: 7px 14px; border-radius: 999px;
+}
+.sur-tab.active { background: rgba(255,255,255,.12); color: var(--text); }
+.sur-now-panel { flex: 1; overflow-y: auto; min-height: 0; }
+
+.sur-lyrics { display: flex; flex-direction: column; gap: 13px; padding: 8px 0 40vh; }
+.sur-lyric {
+  font-size: 19px; line-height: 1.4; color: var(--muted); opacity: .5;
+  transition: opacity .25s, color .25s, transform .25s; transform-origin: left;
+  background: none; border: none; text-align: left; padding: 0; cursor: pointer; font-family: inherit;
+}
+.sur-lyric.active { color: var(--text); opacity: 1; font-weight: 600; transform: scale(1.04); }
+.sur-lyric.plain { cursor: default; opacity: .85; }
+.sur-lyrics-note { color: var(--muted); font-size: 13.5px; padding: 20px 0; }
+
+.sur-now-bottom { padding: 14px 40px 26px; display: flex; flex-direction: column; gap: 10px; }
+.sur-now-seek { display: flex; align-items: center; gap: 10px; }
+.sur-now-seek span { font-size: 11.5px; color: var(--muted); width: 38px; text-align: center; }
+.sur-now-seek input[type=range] { flex: 1; accent-color: var(--marigold); height: 4px; }
+.sur-now-controls { display: flex; align-items: center; justify-content: center; gap: 22px; }
+.sur-now-controls .sur-playbtn { width: 52px; height: 52px; }
+
+@media (max-width: 900px) {
+  .sur-now-body { grid-template-columns: 1fr; gap: 18px; padding: 0 20px; align-content: start; overflow-y: auto; }
+  .sur-now-art { justify-self: center; width: min(62vw, 300px); }
+  .sur-now-side { height: auto; }
+  .sur-now-title { font-size: 21px; }
+  .sur-now-panel { max-height: 34vh; }
+  .sur-now-bottom { padding: 10px 20px 20px; }
+  .sur-lyric { font-size: 17px; }
+}
 .sur-vinyl-glow { position: absolute; inset: -4px; border-radius: 50%; background: radial-gradient(circle, rgba(242,169,59,0.35), transparent 70%); opacity: 0; transition: opacity .3s; }
 .sur-vinyl-glow.on { opacity: 1; }
 .sur-vinyl { width: 46px; height: 46px; border-radius: 50%; overflow: hidden; border: 2px solid var(--surface-2); position: relative; }
@@ -370,6 +434,12 @@ export default function SurMusicPlayer() {
   const [podcastResults, setPodcastResults] = useState([]);
   const [podcastBusy, setPodcastBusy] = useState(false);
   const [openShow, setOpenShow] = useState(null);
+
+  const [nowOpen, setNowOpen] = useState(false);
+  const [nowTab, setNowTab] = useState("lyrics");
+  const [lyrics, setLyrics] = useState(null);
+  const [lyricsBusy, setLyricsBusy] = useState(false);
+  const [tint, setTint] = useState(null);
   const [shuffle, setShuffle] = useState(false);
   const [repeat, setRepeat] = useState("off"); // off | all | one
   const [playlists, setPlaylists] = useState(() => loadPlaylists());
@@ -678,6 +748,35 @@ export default function SurMusicPlayer() {
     setPodcastSubs(next);
     saveSubscriptions(next);
   }
+
+  useEffect(() => {
+    if (!current) { setLyrics(null); return; }
+    let cancelled = false;
+    setLyrics(null);
+    setLyricsBusy(true);
+    fetchLyrics(current)
+      .then((found) => { if (!cancelled) setLyrics(found); })
+      .finally(() => { if (!cancelled) setLyricsBusy(false); });
+    return () => { cancelled = true; };
+  }, [current?.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    dominantColour(current?.cover).then((c) => { if (!cancelled) setTint(c); });
+    return () => { cancelled = true; };
+  }, [current?.cover]);
+
+  const activeLyric = useMemo(
+    () => (lyrics?.synced?.length ? activeLineAt(lyrics.synced, currentTime + 0.35) : -1),
+    [lyrics, currentTime]
+  );
+
+  useEffect(() => {
+    if (!nowOpen) return;
+    const onKey = (e) => { if (e.key === "Escape") setNowOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [nowOpen]);
 
   // The YouTube player owns playback while it's on screen, so silence ours.
   useEffect(() => {
@@ -1825,10 +1924,119 @@ export default function SurMusicPlayer() {
         </div>
       )}
 
+      {nowOpen && current && (
+        <div className="sur-now" style={tint ? { "--np-h": Math.round(tint.h) } : undefined}>
+          <div className="sur-now-top">
+            <button className="sur-ctrlbtn" onClick={() => setNowOpen(false)} title="Close">
+              <ChevronDown size={22} />
+            </button>
+            <span className="label">{current.live ? "Live now" : "Now playing"}</span>
+            <button
+              className={`sur-heart ${liked.has(current.id) ? "liked" : ""}`}
+              onClick={() => toggleLike(current.id)}
+            >
+              <Heart size={19} fill={liked.has(current.id) ? "currentColor" : "none"} />
+            </button>
+          </div>
+
+          <div className="sur-now-body">
+            <div className="sur-now-art">
+              <Cover
+                src={current.cover}
+                seed={current.album || current.title}
+                size={64}
+                lookup={{ album: current.album, artist: current.director }}
+              />
+            </div>
+
+            <div className="sur-now-side">
+              <h2 className="sur-now-title sur-display">{current.title}</h2>
+              <p className="sur-now-artist">{current.artist}</p>
+              {current.album && current.album !== current.title && (
+                <p className="sur-now-album">
+                  {current.album}
+                  {current.director && current.director !== "Unknown" ? ` · ${current.director}` : ""}
+                </p>
+              )}
+
+              <div className="sur-now-tabs">
+                <button className={`sur-tab ${nowTab === "lyrics" ? "active" : ""}`} onClick={() => setNowTab("lyrics")}>
+                  Lyrics
+                </button>
+                <button className={`sur-tab ${nowTab === "queue" ? "active" : ""}`} onClick={() => setNowTab("queue")}>
+                  Up Next{queue.length ? ` (${queue.length})` : ""}
+                </button>
+              </div>
+
+              <div className="sur-now-panel">
+                {nowTab === "lyrics" ? (
+                  <LyricsPanel
+                    lyrics={lyrics}
+                    busy={lyricsBusy}
+                    active={activeLyric}
+                    live={current.live}
+                    onSeek={(t) => {
+                      if (audioRef.current) audioRef.current.currentTime = t;
+                      setCurrentTime(t);
+                    }}
+                  />
+                ) : (
+                  <TrackList
+                    tracks={queue}
+                    onPlay={(idx) => playFrom(queue, idx)}
+                    currentId={current.id}
+                    isPlaying={isPlaying}
+                    liked={liked}
+                    onToggleLike={toggleLike}
+                    onAdd={setAddingTrack}
+                  />
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="sur-now-bottom">
+            <div className="sur-now-seek">
+              <span>{current.live ? "LIVE" : fmtTime(currentTime)}</span>
+              <input
+                type="range"
+                min={0}
+                max={duration || 0}
+                value={currentTime}
+                onChange={(e) => {
+                  const t = Number(e.target.value);
+                  setCurrentTime(t);
+                  if (audioRef.current) audioRef.current.currentTime = t;
+                }}
+                disabled={current.live}
+              />
+              <span>{current.live ? "●" : fmtTime(duration)}</span>
+            </div>
+            <div className="sur-now-controls">
+              <button className={`sur-ctrlbtn ${shuffle ? "on" : ""}`} onClick={() => setShuffle((s) => !s)} title="Shuffle">
+                <Shuffle size={18} />
+              </button>
+              <button className="sur-ctrlbtn" onClick={prev}><SkipBack size={24} fill="currentColor" /></button>
+              <button className="sur-playbtn" onClick={togglePlay}>
+                {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" style={{ marginLeft: 3 }} />}
+              </button>
+              <button className="sur-ctrlbtn" onClick={next}><SkipForward size={24} fill="currentColor" /></button>
+              <button
+                className={`sur-ctrlbtn ${repeat !== "off" ? "on" : ""}`}
+                onClick={() => setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"))}
+                title={`Repeat: ${repeat}`}
+              >
+                {repeat === "one" ? <Repeat1 size={18} /> : <Repeat size={18} />}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="sur-player">        <div className="sur-np">
           {current ? (
             <>
-              <div className="sur-vinyl-wrap">
+              <div className="sur-vinyl-wrap" onClick={() => setNowOpen(true)} title="Open now playing">
                 <div className={`sur-vinyl-glow ${isPlaying ? "on" : ""}`} />
                 <div className={`sur-vinyl ${isPlaying ? "spin" : ""}`}>
                   <Cover
@@ -1839,10 +2047,13 @@ export default function SurMusicPlayer() {
                   />
                 </div>
               </div>
-              <div className="sur-np-meta">
+              <div className="sur-np-meta" onClick={() => setNowOpen(true)} style={{ cursor: "pointer" }}>
                 <p className="t">{current.title}</p>
                 <p className="a">{current.artist}</p>
               </div>
+              <button className="sur-ctrlbtn" onClick={() => setNowOpen(true)} title="Open now playing">
+                <ChevronUp size={16} />
+              </button>
               <button className={`sur-heart ${liked.has(current.id) ? "liked" : ""}`} onClick={() => toggleLike(current.id)}>
                 <Heart size={16} fill={liked.has(current.id) ? "currentColor" : "none"} />
               </button>
@@ -1905,6 +2116,44 @@ export default function SurMusicPlayer() {
           <input type="range" min={0} max={1} step={0.01} value={volume} onChange={(e) => setVolume(Number(e.target.value))} />
         </div>
       </div>
+    </div>
+  );
+}
+
+function LyricsPanel({ lyrics, busy, active, live, onSeek }) {
+  const activeRef = useRef(null);
+
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [active]);
+
+  if (live) return <p className="sur-lyrics-note">Live radio doesn't carry lyrics.</p>;
+  if (busy) return <p className="sur-lyrics-note">Looking for lyrics…</p>;
+  if (!lyrics) return <p className="sur-lyrics-note">No lyrics found for this track.</p>;
+
+  if (!lyrics.synced.length) {
+    return (
+      <div className="sur-lyrics">
+        {lyrics.plain.split("\n").map((line, i) => (
+          <span className="sur-lyric plain" key={i}>{line || "\u00a0"}</span>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="sur-lyrics">
+      {lyrics.synced.map((line, i) => (
+        <button
+          key={`${line.time}-${i}`}
+          ref={i === active ? activeRef : null}
+          className={`sur-lyric ${i === active ? "active" : ""}`}
+          onClick={() => onSeek(line.time)}
+          title="Jump to this line"
+        >
+          {line.text || "\u00a0"}
+        </button>
+      ))}
     </div>
   );
 }

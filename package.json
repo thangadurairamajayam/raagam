@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node src/lib/metadata.test.mjs && node src/lib/regional.test.mjs",
+    "test": "node src/lib/metadata.test.mjs && node src/lib/regional.test.mjs && node src/lib/lyrics.test.mjs",
     "deploy": "npm run build && npx --yes netlify-cli deploy --prod --dir=dist --functions=netlify/functions",
     "deploy:preview": "npm run build && npx --yes netlify-cli deploy --dir=dist --functions=netlify/functions",
     "docker:rebuild": "docker rm -f sur-music 2>/dev/null; docker build -t sur-music-app . && docker run -d --name sur-music -p 5173:5173 sur-music-app && echo 'http://localhost:5173'",
