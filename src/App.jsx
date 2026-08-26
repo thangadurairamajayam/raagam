@@ -1496,8 +1496,7 @@ export default function SurMusicPlayer() {
                 </div>
                 <p className="sur-note">
                   Podcasts publish an open RSS feed so any app can read it — there is no licence to
-                  buy and no ad to skip. Pasting a feed URL always works; name search uses a small
-                  public directory whose Tamil coverage is thin.
+                  buy and no ad to skip. Search by name, or paste a feed URL directly if you have one.
                 </p>
 
                 {podcastSubs.length > 0 && (
