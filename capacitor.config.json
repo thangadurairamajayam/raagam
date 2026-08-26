@@ -1,0 +1,9 @@
+{
+  "appId": "com.raagam.musicplayer",
+  "appName": "raagam",
+  "webDir": "dist",
+  "backgroundColor": "#140B18",
+  "server": {
+    "androidScheme": "https"
+  }
+}

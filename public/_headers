@@ -1,0 +1,12 @@
+# Netlify reads this from the publish folder, so it applies to drag-and-drop
+# deploys too (netlify.toml is only read for Git-connected builds).
+
+/sw.js
+  Cache-Control: no-cache
+
+/manifest.webmanifest
+  Cache-Control: no-cache
+
+# Hashed filenames, so these are safe to keep forever.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable

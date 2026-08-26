@@ -1,0 +1,8 @@
+FROM node:20-alpine
+WORKDIR /app
+COPY package*.json ./
+# ci, not install: build from the committed lockfile so the image can't drift.
+RUN npm ci
+COPY . .
+EXPOSE 5173
+CMD ["npx", "vite", "--host", "0.0.0.0", "--port", "5173"]

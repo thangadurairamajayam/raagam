@@ -1,0 +1,21 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+# The app calls /api/youtube; Netlify serves it from the function.
+[[redirects]]
+  from = "/api/youtube"
+  to = "/.netlify/functions/youtube"
+  status = 200
+
+# Podcast hosts that omit CORS headers are relayed through this.
+[[redirects]]
+  from = "/api/feed"
+  to = "/.netlify/functions/feed"
+  status = 200
+
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    cache-control = "no-cache"
