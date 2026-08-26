@@ -61,6 +61,8 @@ async function searchViaProxy(query) {
   if (!isJson) return null;
 
   const body = await res.json();
+  // A proxy with no key configured is no more use than no proxy at all.
+  if (body.code === "NO_SERVER_KEY") return null;
   if (!res.ok) throw new Error(body.error || `Search failed (${res.status})`);
   return body.items;
 }
@@ -81,7 +83,7 @@ export async function searchYouTube(query, apiKey) {
     }
   }
 
-  if (!apiKey) throw new Error("No search key set, and no server proxy is deployed.");
+  if (!apiKey) throw new Error("Add a YouTube API key in Settings to search here, or use the button below to search on YouTube itself.");
 
   // Bias toward Tamil music with real API parameters rather than by appending
   // "tamil" to the query, which wrecks exact song titles.

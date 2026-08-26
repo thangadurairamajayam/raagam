@@ -23,7 +23,9 @@ export async function handler(event) {
     body: JSON.stringify(body),
   });
 
-  if (!key) return json(500, { error: "Server is missing YOUTUBE_API_KEY." });
+  // Flagged so the client can fall back to a device key instead of showing the
+  // visitor a server configuration error it can do nothing about.
+  if (!key) return json(503, { code: "NO_SERVER_KEY", error: "Server is missing YOUTUBE_API_KEY." });
   if (!query) return json(400, { error: "Missing search term." });
 
   const params = new URLSearchParams({
