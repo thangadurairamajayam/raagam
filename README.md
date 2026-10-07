@@ -3,6 +3,15 @@
 A Capacitor-wrapped version of the sur. music player MVP, ready to build for Android and iOS.
 
 ## What's inside
+- Listener controls: every song has Play next / Add to queue; Up Next supports
+  drag reordering, move buttons, removal, clearing, and saving as a playlist.
+- Favorites and the queue are remembered on this device. Playback restores paused;
+  local files reconnect when the same folder is reopened. Stored data contains
+  metadata rather than session-only audio or artwork blob URLs.
+- Mobile navigation uses Home, Search, and Library. Library includes all music
+  sources; Home includes recent listening, favorites, and your playlists.
+- Playback shows buffering and retry feedback. Shuffle visits each queue entry
+  before repeating; Previous restarts the current song after three seconds.
 - `src/App.jsx` — the player UI (browse, search, playback)
 - `src/lib/localLibrary.js` — reads your own music files + ID3 tags
 - `src/lib/archive.js` — Internet Archive search/streaming
@@ -15,6 +24,27 @@ A Capacitor-wrapped version of the sur. music player MVP, ready to build for And
 
 ## Where the music comes from
 
+### Building a subscription-free player
+
+The player can stay free to use: begin with personal local files, a user's own
+Subsonic server, and music whose rights holders allow the intended use. Local
+playback needs neither an account nor a hosted audio catalog. Netlify serves the
+app and API functions; it does not supply a licensed commercial music catalog.
+
+For a public catalog, partner with independent artists and obtain permission
+covering both recordings and compositions, territories, and any offline copies.
+Keep license and attribution details with each release. An Archive license label
+is uploaded metadata, so verify permissions before rehosting a recording.
+Hosting and licensing still cost money; donations, sponsorships, optional paid
+extras, or advertising can fund a player without a listener subscription.
+
+YouTube stays a visible embedded video source. Its developer policies do not
+allow extracting audio, unauthorized downloads, or a hidden/background player.
+It is not a route to an unrestricted, ad-free commercial audio catalog.
+
+References: [YouTube developer policies](https://developers.google.com/youtube/terms/developer-policies)
+and [recording/composition rights](https://www.copyright.gov/register/pa-sr.html).
+
 **1. Your own files** ("Add my music folder" on Home). Pick a folder; the app reads
 ID3 tags in the browser and groups the songs. Nothing is uploaded and no network is
 used. Blob URLs are per-session, so re-pick the folder after a restart.
@@ -22,6 +52,27 @@ used. Blob URLs are per-session, so re-pick the folder after a restart.
 **2. Internet Archive** ("Discover"). Publicly hosted Tamil audio, browsable by category:
 Everything, Songs, Film & Movie, Jukebox & Hits, Devotional, Carnatic & Vocal,
 Folk & Gaana, Instrumental, BGM & Themes, OST.
+
+**3. Your own server** ("My Server"). Any Subsonic-compatible server — Navidrome,
+Airsonic, Gonic, or Jellyfin with its Subsonic plugin. Ad-free, works from every
+device, and legal because the server holds music you own. Quick start:
+
+```bash
+docker run -d --name navidrome -p 4533:4533 \
+  -e ND_ENABLECORS=true \
+  -v /path/to/your/music:/music:ro \
+  -v ./navidrome-data:/data \
+  deluan/navidrome:latest
+```
+
+Create the admin user at `http://localhost:4533`, then enter that address plus the
+username and password under "My Server". Notes:
+
+- `ND_ENABLECORS=true` is required — the browser blocks the API without it.
+- An https-served app cannot stream from an `http://` server (mixed content). For
+  remote access put the server behind https via a reverse proxy or Tailscale.
+- The password is salted and hashed before storage; only the Subsonic token is
+  kept on the device.
 
 Approximate catalogue sizes (live Archive counts):
 

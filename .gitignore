@@ -9,3 +9,6 @@ ios/App/build/
 # secrets
 .env
 .env.local
+
+# Local music-server runtime data
+navidrome-data/

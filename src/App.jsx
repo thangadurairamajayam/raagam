@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
-import { Play, Pause, SkipBack, SkipForward, Heart, Search, Home, Volume2, VolumeX, Music2, Disc3, UserRound, Tags, FolderPlus, Globe, Loader2, ArrowLeft, ShieldCheck, ShieldAlert, Clapperboard, RadioTower, Shuffle, Repeat, Repeat1, ListMusic, Plus, Trash2, ListPlus, Youtube, KeyRound, Share2, Download, Film, History, Moon, Mic, Rss, ChevronDown, ChevronUp } from "lucide-react";
+import React, { useState, useRef, useEffect, useMemo, useCallback, createContext, useContext } from "react";
+import { Play, Pause, SkipBack, SkipForward, Heart, Search, Home, Volume2, VolumeX, Music2, Disc3, UserRound, Tags, FolderPlus, Globe, Loader2, ArrowLeft, ShieldCheck, ShieldAlert, Clapperboard, RadioTower, Shuffle, Repeat, Repeat1, ListMusic, Plus, Trash2, ListPlus, Youtube, KeyRound, Share2, Download, Film, History, Moon, Mic, Rss, ChevronDown, ChevronUp, Server, LogOut, MoreHorizontal } from "lucide-react";
 
 import { pickLocalFiles, buildLocalTracks } from "./lib/localLibrary.js";
 import {
@@ -8,6 +8,9 @@ import {
 } from "./lib/fileStore.js";
 import { searchArchive, loadArchiveAlbum, countArchive, CATEGORIES } from "./lib/archive.js";
 import { searchStations } from "./lib/radio.js";
+import {
+  loadServer, saveServer, clearServer, pingServer, searchServer, loadServerAlbum,
+} from "./lib/subsonic.js";
 import {
   CURATED as CURATED_PODCASTS, loadFeed, searchPodcasts, loadSubscriptions,
   saveSubscriptions, isSubscribed, toggleSubscription,
@@ -27,12 +30,17 @@ import { ACTOR_NAMES, DIRECTOR_NAMES } from "./lib/metadata.js";
 import { FILMS, DECADES, decadeOf, filmsBy, soundtrackQuery, STORES } from "./lib/films.js";
 import { searchNormalise } from "./lib/tamil.js";
 import {
-  loadRecent, pushRecent, clearRecent, saveResume, loadResume, clearResume, resolveRecent,
+  loadRecent, pushRecent, clearRecent, saveResume, loadResume, clearResume,
 } from "./lib/history.js";
 import {
   showNowPlaying, updatePlayState, clearNowPlaying, bindControls,
 } from "./lib/nativeAudio.js";
 import { buildLibrary, searchTracks, searchEverything } from "./lib/grouping.js";
+
+import { storedTrack, resolveTrack, loadQueue, saveQueue, loadFavorites, saveFavorites,
+  removeQueueTrack, moveQueueTrack } from "./lib/playerState.js";
+
+const TrackActions = createContext(null);
 
 function fmtTime(s) {
   if (!s || Number.isNaN(s)) return "0:00";
@@ -402,20 +410,58 @@ const STYLES = `
 .sur-yt-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
 
 .sur-nav-foot { margin-top: auto; }
+.sur-bottomnav { display: none; }
+.sur-track-title { display: block; background: none; border: 0; color: inherit; font: inherit; font-size: 14px; font-weight: 600; padding: 0; text-align: left; cursor: pointer; }
+.sur-meta { min-width: 0; }
+.sur-track-title { width: 100%; overflow-wrap: anywhere; }
+.sur-notice { color: var(--marigold); font-size: 13px; }
+.sur-track-menu { position: relative; }
+.sur-track-menu summary { list-style: none; cursor: pointer; display: flex; padding: 6px; }
+.sur-track-menu summary::-webkit-details-marker { display: none; }
+.sur-track-menu-items { position: absolute; right: 0; top: 100%; z-index: 85; min-width: 160px; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); box-shadow: 0 8px 24px #0008; }
+.sur-track-menu-items button { display: block; width: 100%; border: 0; background: none; color: var(--text); font: inherit; font-size: 13px; text-align: left; padding: 10px; cursor: pointer; }
+.sur-track-menu-items button:hover { background: var(--surface); }
+.sur-sheet { z-index: 90; }
+.sur-root button:focus-visible, .sur-root summary:focus-visible, .sur-root input:focus-visible { outline: 2px solid var(--marigold); outline-offset: 3px; }
+@media (max-width: 720px) {
+  .sur-root { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto auto; }
+  .sur-sidebar { display: none; }
+  .sur-main { grid-column: 1; padding-bottom: 24px; }
+  .sur-player { grid-column: 1; grid-row: 2; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: auto; padding: 10px 12px; gap: 8px; }
+  .sur-player .sur-seek { display: none; }
+  .sur-player .sur-controls { gap: 8px; }
+  .sur-player .sur-controls > button:not(.sur-playbtn):not([aria-label="Next song"]) { display: none; }
+  .sur-player .sur-np > .sur-ctrlbtn { display: none; }
+  .sur-player .sur-np { gap: 8px; }
+  .sur-player .sur-playbtn { width: 36px; height: 36px; }
+  .sur-bottomnav { grid-column: 1; grid-row: 3; display: flex; justify-content: space-around; background: var(--surface); border-top: 1px solid var(--border); padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); }
+  .sur-bottomnav .sur-navbtn { flex-direction: column; gap: 3px; font-size: 11px; padding: 6px 18px; }
+  .sur-bottomnav .sur-navbtn span { display: block; }
+  .sur-row-item { grid-template-columns: 20px 36px minmax(0, 1fr) auto; gap: 8px; }
+  .sur-row-item > .sur-dur { display: none; }
+  .sur-thumb { width: 36px; height: 36px; }
+  .sur-rowacts > .sur-heart[title="Add to playlist"] { display: none; }
+  .sur-np-meta { max-width: none; flex: 1; }
+}
 `;
 
 export default function SurMusicPlayer() {
-  const [tracks, setTracks] = useState([]);
+  const [restored] = useState(loadQueue);
+  const [favorites, setFavorites] = useState(loadFavorites);
+  const [tracks, setTracks] = useState(() => {
+    const entries = [...loadQueue().queue, ...loadFavorites()];
+    return entries.filter((t, i) => t.source !== "local" && t.src && entries.findIndex((e) => e.id === t.id) === i);
+  });
   const [view, setView] = useState("home");
   const [selected, setSelected] = useState(null); // { kind, name }
   const [query, setQuery] = useState("");
-  const [queue, setQueue] = useState([]);
-  const [currentIndex, setCurrentIndex] = useState(null);
+  const [queue, setQueue] = useState(restored.queue);
+  const [currentIndex, setCurrentIndex] = useState(restored.currentIndex);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(0.8);
-  const [liked, setLiked] = useState(() => new Set());
+  const liked = useMemo(() => new Set(favorites.map((t) => resolveTrack(t, tracks)?.id || t.id)), [favorites, tracks]);
   const [scan, setScan] = useState(null);
   const [savedFolder, setSavedFolder] = useState(null);
   const [discoverQuery, setDiscoverQuery] = useState("");
@@ -427,6 +473,11 @@ export default function SurMusicPlayer() {
   const [hiddenByLicence, setHiddenByLicence] = useState(0);
   const [radioStations, setRadioStations] = useState([]);
   const [radioQuery, setRadioQuery] = useState("");
+  const [server, setServer] = useState(() => loadServer());
+  const [serverForm, setServerForm] = useState({ url: "", user: "", password: "" });
+  const [serverAlbums, setServerAlbums] = useState([]);
+  const [serverQuery, setServerQuery] = useState("");
+  const [serverBusy, setServerBusy] = useState(false);
   const [radioBusy, setRadioBusy] = useState(false);
 
   const [podcastSubs, setPodcastSubs] = useState(() => loadSubscriptions());
@@ -457,26 +508,78 @@ export default function SurMusicPlayer() {
   const [sleepMinutes, setSleepMinutes] = useState(0);
   const [sleepLeft, setSleepLeft] = useState(0);
   const [error, setError] = useState("");
+  const [buffering, setBuffering] = useState(false);
+  const [notice, setNotice] = useState("");
+  const pendingSeek = useRef(null);
+  const playbackPosition = useRef(null);
+  const shufflePlayed = useRef(new Set());
+  const shuffleHistory = useRef([]);
   const ytPlayerRef = useRef(null);
   const nativeHandlers = useRef({});
   const audioRef = useRef(null);
 
-  const current = currentIndex !== null ? queue[currentIndex] : null;
+  const currentEntry = currentIndex !== null ? queue[currentIndex] : null;
+  const current = resolveTrack(currentEntry, tracks) || currentEntry;
+  const displayQueue = useMemo(() => queue.map((t) => resolveTrack(t, tracks) || t), [queue, tracks]);
+  const playlistTracks = activePlaylist ? activePlaylist.tracks.map((t) => resolveTrack(t, tracks) || t) : [];
   const library = useMemo(() => buildLibrary(tracks), [tracks]);
 
+  function playbackFailure(e) {
+    if (e?.name === "AbortError") return;
+    setIsPlaying(false);
+    setBuffering(false);
+    setError(e?.name === "NotAllowedError"
+      ? "Tap Play to allow playback on this device."
+      : "Could not play this song. Check your connection or reopen your music folder, then retry.");
+  }
+
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio || !current) return;
-    audio.src = current.src;
-    audio.volume = volume;
-    if (isPlaying) audio.play().catch(() => {});
-  }, [current?.id]);
+    saveQueue(queue, currentIndex);
+  }, [queue, currentIndex]);
+  useEffect(() => {
+    shufflePlayed.current = new Set();
+    shuffleHistory.current = [];
+  }, [queue]);
+  useEffect(() => { saveFavorites(favorites); }, [favorites]);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(""), 3500);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    if (isPlaying) audio.play().catch(() => {});
-    else audio.pause();
+    audio.pause();
+    setCurrentTime(0);
+    setDuration(0);
+    setBuffering(false);
+    setError("");
+    if (!current?.src) {
+      audio.removeAttribute("src");
+      audio.load();
+      if (isPlaying) {
+        setIsPlaying(false);
+        setError("Reopen your music folder to play this saved song.");
+      }
+      return;
+    }
+    audio.src = current.src;
+    audio.load();
+    audio.volume = volume;
+    if (isPlaying) {
+      setBuffering(true);
+      audio.play().catch(playbackFailure);
+    }
+  }, [current?.id, current?.src]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (isPlaying && current?.src) {
+      setBuffering(true);
+      audio.play().catch(playbackFailure);
+    } else audio.pause();
   }, [isPlaying]);
 
   useEffect(() => {
@@ -484,8 +587,8 @@ export default function SurMusicPlayer() {
   }, [volume]);
 
   useEffect(() => {
-    if (current) setRecent(pushRecent(current));
-  }, [current?.id]);
+    if (current && isPlaying && !buffering) setRecent(pushRecent(current));
+  }, [current?.id, isPlaying, buffering]);
 
   // Native media notification: what keeps audio alive when the app is backgrounded.
   // Calls are wrapped so the handlers can be declared before next/prev exist.
@@ -515,7 +618,9 @@ export default function SurMusicPlayer() {
   // Remember the position so playback can be picked up next session.
   useEffect(() => {
     if (!current || current.live) return;
-    const save = () => saveResume(current, audioRef.current?.currentTime);
+    const save = () => {
+      if (playbackPosition.current?.id === current.id) saveResume(current, playbackPosition.current.position);
+    };
     const timer = setInterval(save, 5000);
     window.addEventListener("pagehide", save);
     return () => {
@@ -712,6 +817,69 @@ export default function SurMusicPlayer() {
     if (view === "radio" && !radioStations.length && !radioBusy) runRadio("");
   }, [view]);
 
+  const runServer = useCallback(async (cfg, q) => {
+    if (!cfg) return;
+    setServerBusy(true);
+    setError("");
+    try {
+      setServerAlbums(await searchServer(cfg, { query: q }));
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setServerBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (view === "server" && server && !serverAlbums.length && !serverBusy) runServer(server, "");
+  }, [view, server]);
+
+  async function connectServer() {
+    setServerBusy(true);
+    setError("");
+    try {
+      const cfg = saveServer(serverForm);
+      await pingServer(cfg);
+      setServerForm({ url: "", user: "", password: "" });
+      setServer(cfg);
+      setServerAlbums([]);
+    } catch (e) {
+      clearServer();
+      setError(e.message);
+    } finally {
+      setServerBusy(false);
+    }
+  }
+
+  function disconnectServer() {
+    clearServer();
+    setServer(null);
+    setServerAlbums([]);
+    setServerQuery("");
+  }
+
+  async function openServerAlbum(album) {
+    setServerBusy(true);
+    setError("");
+    try {
+      const albumTracks = await loadServerAlbum(server, album);
+      if (!albumTracks.length) {
+        setError(`"${album.title}" has no playable tracks.`);
+        return;
+      }
+      addTracks(albumTracks);
+      setQueue(albumTracks);
+      setCurrentIndex(0);
+      setIsPlaying(true);
+      setSelected({ kind: "album", name: albumTracks[0].album });
+      setView("albums");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setServerBusy(false);
+    }
+  }
+
   const openPodcast = useCallback(async (show) => {
     setPodcastBusy(true);
     setError("");
@@ -905,7 +1073,7 @@ export default function SurMusicPlayer() {
   }
 
   function playRecent(entry) {
-    const track = resolveRecent(entry, tracks);
+    const track = resolveTrack(entry, tracks);
     if (!track) {
       setError(`“${entry.title}” is one of your own files — reopen your music folder to play it.`);
       return;
@@ -914,38 +1082,109 @@ export default function SurMusicPlayer() {
   }
 
   function continueListening() {
-    const track = resolveRecent(resume.track, tracks);
+    const track = resolveTrack(resume.track, tracks);
     if (!track) {
       setError(`“${resume.track.title}” is one of your own files — reopen your music folder to play it.`);
       return;
     }
     playFrom([track], 0);
-    // Seek once the element has the new source loaded.
-    const seek = () => {
-      if (audioRef.current) audioRef.current.currentTime = resume.position;
-    };
-    setTimeout(seek, 300);
+    // loadedmetadata applies this seek once the source is ready.
+    pendingSeek.current = { id: track.id, position: resume.position };
+    if (audioRef.current?.readyState >= 1 && current?.id === track.id) {
+      audioRef.current.currentTime = Math.min(resume.position, audioRef.current.duration || resume.position);
+      pendingSeek.current = null;
+    }
     clearResume();
     setResume(null);
   }
 
   function playFrom(list, index) {
-    setQueue(list);
+    const track = resolveTrack(list[index], tracks);
+    if (!track) { setError("Reopen your music folder to play this song."); return; }
+    pendingSeek.current = null;
+    shufflePlayed.current = new Set([index]);
+    shuffleHistory.current = [];
+    ytPlayerRef.current?.pauseVideo?.();
+    setQueue(list.map((t) => resolveTrack(t, tracks) || t));
     setCurrentIndex(index);
+    setError("");
+    if (current?.id === track.id && audioRef.current?.ended) audioRef.current.currentTime = 0;
     setIsPlaying(true);
   }
 
+  function enqueue(track, next = false) {
+    const resolved = resolveTrack(track, tracks);
+    if (!resolved) { setError("Reopen your music folder before adding this song."); return; }
+    setQueue((old) => {
+      const copy = [...old];
+      copy.splice(next && currentIndex !== null ? currentIndex + 1 : copy.length, 0, resolved);
+      return copy;
+    });
+    if (!queue.length) setCurrentIndex(0);
+    shufflePlayed.current = new Set();
+    shuffleHistory.current = [];
+    setNotice(next ? "Playing next" : "Added to queue");
+  }
+
+  function clearQueue() {
+    setIsPlaying(false);
+    setQueue([]);
+    setCurrentIndex(null);
+    pendingSeek.current = null;
+    shufflePlayed.current = new Set();
+    shuffleHistory.current = [];
+  }
+
+  function moveQueue(from, to) {
+    const moved = moveQueueTrack(queue, currentIndex, from, to);
+    setQueue(moved.queue);
+    setCurrentIndex(moved.currentIndex);
+    shufflePlayed.current = new Set();
+    shuffleHistory.current = [];
+  }
+
+  function saveQueuePlaylist() {
+    if (!queue.length) return;
+    const name = `Listening queue ${new Date().toLocaleDateString()}`;
+    let updated = createPlaylist(playlists, name);
+    const id = updated[updated.length - 1].id;
+    for (const track of queue) updated = addToPlaylist(updated, id, track);
+    setPlaylists(updated);
+    setNotice("Queue saved as a playlist");
+  }
+
   function togglePlay() {
-    if (current) setIsPlaying((p) => !p);
+    if (!current) return;
+    if (!resolveTrack(current, tracks)) { setError("Reopen your music folder to play this saved song."); return; }
+    setError("");
+    if (!isPlaying) ytPlayerRef.current?.pauseVideo?.();
+    setIsPlaying((p) => !p);
   }
 
   /** Step through the queue honouring shuffle and repeat. */
   function step(delta) {
     if (currentIndex === null || !queue.length) return;
     if (shuffle && queue.length > 1) {
-      let n = currentIndex;
-      while (n === currentIndex) n = Math.floor(Math.random() * queue.length);
+      if (delta < 0 && shuffleHistory.current.length) {
+        setCurrentIndex(shuffleHistory.current.pop());
+        setIsPlaying(true);
+        return;
+      }
+      shufflePlayed.current.add(currentIndex);
+      let available = queue.map((_, i) => i).filter((i) => !shufflePlayed.current.has(i));
+      if (!available.length) {
+        if (repeat === "off") { setIsPlaying(false); return; }
+        shufflePlayed.current = new Set([currentIndex]);
+        available = queue.map((_, i) => i).filter((i) => i !== currentIndex);
+      }
+      const n = available[Math.floor(Math.random() * available.length)];
+      shuffleHistory.current.push(currentIndex);
+      shufflePlayed.current.add(n);
       setCurrentIndex(n);
+      if (queue[n]?.id === current?.id && audioRef.current) {
+        audioRef.current.currentTime = 0;
+        audioRef.current.play().catch(playbackFailure);
+      }
       setIsPlaying(true);
       return;
     }
@@ -958,33 +1197,45 @@ export default function SurMusicPlayer() {
     } else {
       setCurrentIndex(n);
     }
+    const destination = n >= queue.length ? 0 : n < 0 ? queue.length - 1 : n;
+    if (queue[destination]?.id === current?.id && audioRef.current) {
+      audioRef.current.currentTime = 0;
+      audioRef.current.play().catch(playbackFailure);
+    }
     setIsPlaying(true);
   }
 
   const next = () => step(1);
-  const prev = () => step(-1);
+  const prev = () => {
+    if (!current?.live && audioRef.current?.currentTime > 3) {
+      audioRef.current.currentTime = 0;
+      setCurrentTime(0);
+    } else step(-1);
+  };
 
   function onTrackEnded() {
     if (repeat === "one" && audioRef.current) {
       audioRef.current.currentTime = 0;
-      audioRef.current.play().catch(() => {});
+      audioRef.current.play().catch(playbackFailure);
       return;
     }
     next();
   }
 
   function removeFromQueue(index) {
-    setQueue((q) => q.filter((_, i) => i !== index));
-    if (index < currentIndex) setCurrentIndex((i) => i - 1);
-    else if (index === currentIndex) setIsPlaying(false);
+    const next = removeQueueTrack(queue, currentIndex, index);
+    setQueue(next.queue);
+    setCurrentIndex(next.currentIndex);
+    if (next.currentIndex === null) setIsPlaying(false);
+    shufflePlayed.current = new Set();
+    shuffleHistory.current = [];
   }
 
   function toggleLike(id) {
-    setLiked((prev) => {
-      const s = new Set(prev);
-      s.has(id) ? s.delete(id) : s.add(id);
-      return s;
-    });
+    const entry = [...tracks, ...queue, ...recent, ...favorites].find((t) => t.id === id);
+    if (!entry) return;
+    setFavorites((old) => old.some((t) => (resolveTrack(t, tracks)?.id || t.id) === id)
+      ? old.filter((t) => (resolveTrack(t, tracks)?.id || t.id) !== id) : [...old, storedTrack(entry)]);
   }
 
   function openCollection(kind, name) {
@@ -1001,7 +1252,8 @@ export default function SurMusicPlayer() {
     }),
     [tracks, query]
   );
-  const likedTracks = useMemo(() => tracks.filter((t) => liked.has(t.id)), [tracks, liked]);
+  const likedTracks = useMemo(() => favorites.map((t) => resolveTrack(t, tracks) || t), [tracks, favorites]);
+  const favoriteAlbums = useMemo(() => buildLibrary(likedTracks).albums, [likedTracks]);
 
   // Known names are listed even with nothing loaded, so the browse dimensions are
   // never dead ends — an empty one offers to search the streaming sources instead.
@@ -1029,16 +1281,24 @@ export default function SurMusicPlayer() {
   const isEmpty = tracks.length === 0;
 
   return (
+    <TrackActions.Provider value={{ enqueue, onAdd: setAddingTrack }}>
     <div className="sur-root">
       <style>{STYLES}</style>
       <audio
         ref={audioRef}
-        onTimeUpdate={(e) => setCurrentTime(e.target.currentTime)}
-        onLoadedMetadata={(e) => setDuration(e.target.duration)}
-        onError={() => {
-          if (current?.live) setError(`"${current.title}" isn't responding — stations go offline often, try another.`);
+        onTimeUpdate={(e) => { setCurrentTime(e.target.currentTime); playbackPosition.current = { id: current?.id, position: e.target.currentTime }; }}
+        onLoadedMetadata={(e) => {
+          setDuration(Number.isFinite(e.target.duration) ? e.target.duration : 0);
+          if (pendingSeek.current?.id === current?.id) {
+            e.target.currentTime = Math.min(pendingSeek.current.position, e.target.duration || pendingSeek.current.position);
+            pendingSeek.current = null;
+          }
         }}
-        onPlaying={() => setError("")}
+        onError={() => { if (audioRef.current?.hasAttribute("src")) playbackFailure(); }}
+        onWaiting={() => { if (isPlaying) setBuffering(true); }}
+        onStalled={() => { if (isPlaying) setBuffering(true); }}
+        onPause={() => setBuffering(false)}
+        onPlaying={() => { setBuffering(false); setError(""); }}
         onEnded={onTrackEnded}
       />
 
@@ -1062,6 +1322,9 @@ export default function SurMusicPlayer() {
           </button>
           <button className={`sur-navbtn ${view === "podcasts" ? "active" : ""}`} onClick={() => { setView("podcasts"); setSelected(null); setOpenShow(null); }}>
             <Mic size={17} /> <span>Podcasts</span>
+          </button>
+          <button className={`sur-navbtn ${view === "server" ? "active" : ""}`} onClick={() => { setView("server"); setSelected(null); }}>
+            <Server size={17} /> <span>My Server</span>
           </button>
           <button className={`sur-navbtn ${view === "youtube" ? "active" : ""}`} onClick={() => { setView("youtube"); setSelected(null); }}>
             <Youtube size={17} /> <span>YouTube</span>
@@ -1116,7 +1379,27 @@ export default function SurMusicPlayer() {
           </div>
         </div>
 
-        {error && <p className="sur-error">{error}</p>}
+        {error && <div className="sur-error" role="alert">{error} {current?.src && <button className="sur-btn" onClick={() => {
+          setError(""); audioRef.current.load(); setIsPlaying(true); audioRef.current.play().catch(playbackFailure);
+        }}>Retry</button>}</div>}
+        {notice && <p className="sur-notice" role="status">{notice}</p>}
+        {buffering && <p className="sur-progress" role="status"><Loader2 size={14} className="sur-spin-icon" /> Buffering…</p>}
+
+        {view === "library" && <>
+          <h1 className="sur-heading sur-display">Your library</h1>
+          <p className="sur-subtext">Your music, your playlists. No subscription.</p>
+          <div className="sur-sources">
+            {[["Liked songs", "liked", Heart], ["Albums", "albums", Disc3], ["Playlists", "playlists", ListMusic],
+              ["Up next", "queue", ListPlus], ["Music directors", "directors", UserRound], ["Actors", "actors", Clapperboard],
+              ["Genres", "genres", Tags], ["Movies", "movies", Film], ["Free music", "discover", Globe],
+              ["Tamil radio", "radio", RadioTower], ["Podcasts", "podcasts", Mic], ["My server", "server", Server],
+              ["YouTube", "youtube", Youtube]].map(([label, target, Icon]) =>
+                <button key={target} className="sur-source" onClick={() => {
+                  setView(target); setSelected(null); setActivePlaylist(null); setOpenShow(null);
+                }}><Icon size={22} /><span className="t">{label}</span></button>)}
+          </div>
+          <button className="sur-btn primary" onClick={importLocal} disabled={!!scan}><FolderPlus size={16} /> Add my music</button>
+        </>}
         {scan && <p className="sur-progress">Reading tags… {scan.done} / {scan.total}</p>}
 
         {view === "home" && (
@@ -1200,10 +1483,27 @@ export default function SurMusicPlayer() {
               </div>
             )}
 
+            {likedTracks.length > 0 && <div className="sur-section">
+              <div className="sur-section-title"><h2>Your favorites</h2><button className="sur-btn" onClick={() => setView("liked")}>See all</button></div>
+              <TrackList tracks={likedTracks.slice(0, 5)} onPlay={(idx) => playFrom(likedTracks, idx)} currentId={current?.id}
+                isPlaying={isPlaying} liked={liked} onToggleLike={toggleLike} onAdd={setAddingTrack} />
+            </div>}
+            {favoriteAlbums.length > 0 && <SectionRow title="Favorite albums" items={favoriteAlbums.slice(0, 10)} onOpen={(album) => {
+              const loaded = library.albums.find((a) => a.name === album.name);
+              if (loaded) openCollection("album", album.name);
+              else playFrom(album.tracks, 0);
+            }} />}
+            {playlists.length > 0 && <div className="sur-section">
+              <div className="sur-section-title"><h2>Made by you</h2></div>
+              <div className="sur-sources">{playlists.slice(0, 6).map((playlist) => <button className="sur-source" key={playlist.id}
+                onClick={() => { setActivePlaylist(playlist); setView("playlists"); }}><ListMusic size={22} />
+                <span className="t">{playlist.name}</span><span className="a">{playlist.tracks.length} songs</span></button>)}</div>
+            </div>}
             <div className="sur-section">
               <div className="sur-section-title"><h2>Where the music comes from</h2></div>              <div className="sur-sources">
                 {[
                   { icon: FolderPlus, name: "My music", music: "Whatever you own", keep: "Yours to keep", go: importLocal },
+                  { icon: Server, name: "My Server", music: "Your own library, ad-free", keep: "Yours to keep", go: () => setView("server") },
                   { icon: Globe, name: "Discover", music: "Free-licensed only", keep: "Yours to keep", go: () => setView("discover") },
                   { icon: RadioTower, name: "Tamil Radio", music: "Current hits, live", keep: "Listen only", go: () => setView("radio") },
                   { icon: Youtube, name: "YouTube", music: "Everything, incl. BGM", keep: "Listen only", go: () => setView("youtube") },
@@ -1547,6 +1847,94 @@ export default function SurMusicPlayer() {
           </>
         )}
 
+        {view === "server" && (
+          <>
+            <h1 className="sur-heading sur-display">My Server</h1>
+            <p className="sur-subtext">
+              Your own library, streamed from your own machine — no ads, no licence filter, every device.
+            </p>
+
+            {!server ? (
+              <>
+                <div className="sur-actions" style={{ flexWrap: "wrap" }}>
+                  <div className="sur-searchwrap">
+                    <Server size={15} />
+                    <input
+                      placeholder="https://music.example.com"
+                      value={serverForm.url}
+                      onChange={(e) => setServerForm({ ...serverForm, url: e.target.value })}
+                    />
+                  </div>
+                  <div className="sur-searchwrap">
+                    <UserRound size={15} />
+                    <input
+                      placeholder="Username"
+                      autoComplete="username"
+                      value={serverForm.user}
+                      onChange={(e) => setServerForm({ ...serverForm, user: e.target.value })}
+                    />
+                  </div>
+                  <div className="sur-searchwrap">
+                    <KeyRound size={15} />
+                    <input
+                      type="password"
+                      placeholder="Password"
+                      autoComplete="current-password"
+                      value={serverForm.password}
+                      onChange={(e) => setServerForm({ ...serverForm, password: e.target.value })}
+                      onKeyDown={(e) => e.key === "Enter" && connectServer()}
+                    />
+                  </div>
+                  <button
+                    className="sur-btn primary"
+                    disabled={serverBusy || !serverForm.url.trim() || !serverForm.user.trim()}
+                    onClick={connectServer}
+                  >
+                    {serverBusy ? <Loader2 size={16} className="sur-spin-icon" /> : <ShieldCheck size={16} />} Connect
+                  </button>
+                </div>
+                <p className="sur-note">
+                  Works with any Subsonic-compatible server — <strong>Navidrome</strong>, Airsonic,
+                  Gonic, or Jellyfin with its Subsonic plugin. Point it at a folder of music you
+                  own and it becomes your private, ad-free catalogue.
+                </p>
+                <p className="sur-note">
+                  Your password is hashed with a random salt before anything is stored, so only the
+                  salted token is kept on this device — never the password itself.
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="sur-actions">
+                  <div className="sur-searchwrap">
+                    <Search size={15} />
+                    <input
+                      placeholder="Search your library"
+                      value={serverQuery}
+                      onChange={(e) => setServerQuery(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && runServer(server, serverQuery)}
+                    />
+                  </div>
+                  <button className="sur-btn" onClick={() => runServer(server, serverQuery)} disabled={serverBusy}>
+                    {serverBusy ? <Loader2 size={16} className="sur-spin-icon" /> : <Search size={16} />} Search
+                  </button>
+                  <button className="sur-btn" onClick={disconnectServer}>
+                    <LogOut size={16} /> Sign out
+                  </button>
+                </div>
+                <p className="sur-note">
+                  Connected to <strong>{server.url}</strong> as {server.user}.
+                </p>
+                {serverBusy && !serverAlbums.length && <p className="sur-progress">Loading albums…</p>}
+                {!serverBusy && !serverAlbums.length && (
+                  <p className="sur-empty">No albums found on the server.</p>
+                )}
+                <CollectionGrid items={serverAlbums} icon={Disc3} onOpen={openServerAlbum} />
+              </>
+            )}
+          </>
+        )}
+
         {view === "podcasts" && (
           <>
             {openShow ? (
@@ -1627,13 +2015,18 @@ export default function SurMusicPlayer() {
         {view === "queue" && (
           <>
             <h1 className="sur-heading sur-display">Up Next</h1>
+            {queue.length > 0 && <div className="sur-actions">
+              <button className="sur-btn" onClick={saveQueuePlaylist}><ListMusic size={16} /> Save as playlist</button>
+              <button className="sur-btn" onClick={clearQueue}><Trash2 size={16} /> Clear queue</button>
+            </div>}
             <p className="sur-subtext">
               {queue.length ? `${queue.length} in queue${shuffle ? " · shuffling" : ""}` : "Nothing queued."}
             </p>
             {queue.length > 0 && (
               <TrackList
-                tracks={queue}
-                onPlay={(idx) => setCurrentIndex(idx) || setIsPlaying(true)}
+                tracks={displayQueue}
+                onMove={moveQueue}
+                onPlay={(idx) => playFrom(displayQueue, idx)}
                 currentId={current?.id}
                 isPlaying={isPlaying}
                 liked={liked}
@@ -1662,8 +2055,8 @@ export default function SurMusicPlayer() {
                 <p className="sur-empty">Empty — use the + on any song to add it here.</p>
               ) : (
                 <TrackList
-                  tracks={activePlaylist.tracks}
-                  onPlay={(idx) => playFrom(activePlaylist.tracks, idx)}
+                  tracks={playlistTracks}
+                  onPlay={(idx) => playFrom(playlistTracks, idx)}
                   currentId={current?.id}
                   isPlaying={isPlaying}
                   liked={liked}
@@ -1968,6 +2361,9 @@ export default function SurMusicPlayer() {
                 </button>
               </div>
 
+              {error && <p className="sur-error" role="alert">{error}<button className="sur-btn" onClick={togglePlay}>Retry</button></p>}
+              {buffering && <p className="sur-progress" role="status">Buffering…</p>}
+              {notice && <p className="sur-notice" role="status">{notice}</p>}
               <div className="sur-now-panel">
                 {nowTab === "lyrics" ? (
                   <LyricsPanel
@@ -1981,15 +2377,23 @@ export default function SurMusicPlayer() {
                     }}
                   />
                 ) : (
+                  <>
+                  <div className="sur-actions">
+                    <button className="sur-btn" onClick={saveQueuePlaylist}>Save as playlist</button>
+                    <button className="sur-btn" onClick={() => { clearQueue(); setNowOpen(false); }}>Clear queue</button>
+                  </div>
                   <TrackList
-                    tracks={queue}
-                    onPlay={(idx) => playFrom(queue, idx)}
+                    tracks={displayQueue}
+                    onMove={moveQueue}
+                    onRemove={removeFromQueue}
+                    onPlay={(idx) => playFrom(displayQueue, idx)}
                     currentId={current.id}
                     isPlaying={isPlaying}
                     liked={liked}
                     onToggleLike={toggleLike}
                     onAdd={setAddingTrack}
                   />
+                  </>
                 )}
               </div>
             </div>
@@ -2016,11 +2420,11 @@ export default function SurMusicPlayer() {
               <button className={`sur-ctrlbtn ${shuffle ? "on" : ""}`} onClick={() => setShuffle((s) => !s)} title="Shuffle">
                 <Shuffle size={18} />
               </button>
-              <button className="sur-ctrlbtn" onClick={prev}><SkipBack size={24} fill="currentColor" /></button>
-              <button className="sur-playbtn" onClick={togglePlay}>
+              <button className="sur-ctrlbtn" aria-label="Previous song" onClick={prev}><SkipBack size={24} fill="currentColor" /></button>
+              <button className="sur-playbtn" aria-label={isPlaying ? "Pause" : "Play"} onClick={togglePlay}>
                 {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" style={{ marginLeft: 3 }} />}
               </button>
-              <button className="sur-ctrlbtn" onClick={next}><SkipForward size={24} fill="currentColor" /></button>
+              <button className="sur-ctrlbtn" aria-label="Next song" onClick={next}><SkipForward size={24} fill="currentColor" /></button>
               <button
                 className={`sur-ctrlbtn ${repeat !== "off" ? "on" : ""}`}
                 onClick={() => setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"))}
@@ -2072,11 +2476,11 @@ export default function SurMusicPlayer() {
             >
               <Shuffle size={15} />
             </button>
-            <button className="sur-ctrlbtn" onClick={prev} disabled={!current}><SkipBack size={17} fill="currentColor" /></button>
-            <button className="sur-playbtn" onClick={togglePlay} disabled={!current}>
+            <button className="sur-ctrlbtn" aria-label="Previous song" onClick={prev} disabled={!current}><SkipBack size={17} fill="currentColor" /></button>
+            <button className="sur-playbtn" aria-label={isPlaying ? "Pause" : "Play"} onClick={togglePlay} disabled={!current}>
               {isPlaying ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" style={{ marginLeft: 2 }} />}
             </button>
-            <button className="sur-ctrlbtn" onClick={next} disabled={!current}><SkipForward size={17} fill="currentColor" /></button>
+            <button className="sur-ctrlbtn" aria-label="Next song" onClick={next} disabled={!current}><SkipForward size={17} fill="currentColor" /></button>
             <button
               className={`sur-ctrlbtn ${repeat !== "off" ? "on" : ""}`}
               onClick={() => setRepeat((r) => (r === "off" ? "all" : r === "all" ? "one" : "off"))}
@@ -2116,7 +2520,14 @@ export default function SurMusicPlayer() {
           <input type="range" min={0} max={1} step={0.01} value={volume} onChange={(e) => setVolume(Number(e.target.value))} />
         </div>
       </div>
+      <nav className="sur-bottomnav" aria-label="Main navigation">
+        {[["Home", "home", Home], ["Search", "search", Search], ["Library", "library", ListMusic]].map(([label, target, Icon]) =>
+          <button key={target} className={`sur-navbtn ${view === target || (target === "library" && !["home", "search"].includes(view)) ? "active" : ""}`}
+            aria-current={view === target ? "page" : undefined}
+            onClick={() => { setView(target); setSelected(null); }}><Icon size={20} /><span>{label}</span></button>)}
+      </nav>
     </div>
+    </TrackActions.Provider>
   );
 }
 
@@ -2210,7 +2621,8 @@ function CollectionGrid({ items, onOpen, round = false, icon = Disc3 }) {
   return (
     <div className="sur-grid">
       {items.map((item) => (
-        <div className="sur-tile" key={item.id || `${item.kind}:${item.name}`} onClick={() => onOpen(item)}>
+        <div className="sur-tile" key={item.id || `${item.kind}:${item.name}`} role="button" tabIndex={0}
+          onKeyDown={(e) => { if (["Enter", " "].includes(e.key)) { e.preventDefault(); onOpen(item); } }} onClick={() => onOpen(item)}>
           <div className={`sur-tile-art ${round ? "round" : ""}`}>
             <Cover src={item.cover} seed={item.name || item.title} size={26} />
           </div>
@@ -2232,7 +2644,8 @@ function SectionRow({ title, items, onOpen, round = false }) {
       </div>
       <div className="sur-row">
         {items.map((item) => (
-          <div className="sur-card" key={`${item.kind}:${item.name}`} onClick={() => onOpen(item)}>
+          <div className="sur-card" key={`${item.kind}:${item.name}`} role="button" tabIndex={0}
+            onKeyDown={(e) => { if (["Enter", " "].includes(e.key)) { e.preventDefault(); onOpen(item); } }} onClick={() => onOpen(item)}>
             <div className={`sur-tile-art ${round ? "round" : ""}`} style={{ marginBottom: 10 }}>
               <Cover src={item.cover} seed={item.name} size={24} />
             </div>
@@ -2245,13 +2658,19 @@ function SectionRow({ title, items, onOpen, round = false }) {
   );
 }
 
-function TrackList({ tracks, onPlay, currentId, isPlaying, liked, onToggleLike, onAdd, onRemove }) {
+function TrackList({ tracks, onPlay, currentId, isPlaying, liked, onToggleLike, onAdd, onRemove, onMove }) {
+  const actions = useContext(TrackActions);
   return (
     <div className="sur-list">
       {tracks.map((t, idx) => {
         const active = currentId === t.id;
         return (
-          <div key={`${t.id}:${idx}`} className={`sur-row-item ${active ? "playing" : ""}`} onClick={() => onPlay(idx)}>
+          <div key={`${t.id}:${idx}`} className={`sur-row-item ${active ? "playing" : ""}`}
+            draggable={Boolean(onMove)} onDragStart={(e) => e.dataTransfer.setData("text/plain", String(idx))}
+            onDragOver={(e) => { if (onMove) e.preventDefault(); }}
+            onDrop={(e) => { if (!onMove) return; e.preventDefault(); const data = e.dataTransfer.getData("text/plain");
+              if (/^\d+$/.test(data)) onMove(Number(data), idx); }}>
+
             <div className="sur-idx">
               {active && isPlaying ? (
                 <div className="sur-eq"><span /><span /><span /></div>
@@ -2261,7 +2680,7 @@ function TrackList({ tracks, onPlay, currentId, isPlaying, liked, onToggleLike, 
             </div>
             <div className="sur-thumb"><Cover src={t.cover} seed={t.album || t.title} size={14} /></div>
             <div className="sur-meta">
-              <p className="t">{t.title}</p>
+              <button className="sur-track-title" onClick={() => onPlay(idx)} aria-label={`Play ${t.title}`}>{t.title}</button>
               <p className="a">
                 {t.director && t.director !== "Unknown" && t.director !== t.artist
                   ? `${t.artist} · ${t.director}`
@@ -2271,10 +2690,23 @@ function TrackList({ tracks, onPlay, currentId, isPlaying, liked, onToggleLike, 
             <div className="sur-rowacts">
               <button
                 className={`sur-heart ${liked.has(t.id) ? "liked" : ""}`}
+                aria-label={`${liked.has(t.id) ? "Unlike" : "Like"} ${t.title}`} aria-pressed={liked.has(t.id)}
                 onClick={(e) => { e.stopPropagation(); onToggleLike(t.id); }}
               >
                 <Heart size={15} fill={liked.has(t.id) ? "currentColor" : "none"} />
               </button>
+              <details className="sur-track-menu">
+                <summary aria-label={`Options for ${t.title}`}><MoreHorizontal size={18} /></summary>
+                <div className="sur-track-menu-items">
+                  <button onClick={(e) => { actions?.enqueue(t, true); e.currentTarget.closest("details").open = false; }}>Play next</button>
+                  <button onClick={(e) => { actions?.enqueue(t); e.currentTarget.closest("details").open = false; }}>Add to queue</button>
+                  <button onClick={(e) => { (onAdd || actions?.onAdd)?.(t); e.currentTarget.closest("details").open = false; }}>Add to playlist</button>
+                </div>
+              </details>
+              {onMove && <>
+                <button className="sur-heart" aria-label={`Move ${t.title} up`} disabled={idx === 0} onClick={() => onMove(idx, idx - 1)}><ChevronUp size={15} /></button>
+                <button className="sur-heart" aria-label={`Move ${t.title} down`} disabled={idx === tracks.length - 1} onClick={() => onMove(idx, idx + 1)}><ChevronDown size={15} /></button>
+              </>}
               {onAdd && (
                 <button className="sur-heart" title="Add to playlist" onClick={(e) => { e.stopPropagation(); onAdd(t); }}>
                   <Plus size={15} />

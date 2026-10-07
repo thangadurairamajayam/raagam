@@ -1,3 +1,5 @@
+import { storedTrack } from "./playerState.js";
+
 // Playlists, persisted locally. Only track metadata is stored — for local files
 // the blob URL dies with the session, so those entries re-link when the folder
 // is re-imported.
@@ -15,7 +17,7 @@ export function loadPlaylists() {
 
 export function savePlaylists(playlists) {
   try {
-    localStorage.setItem(KEY, JSON.stringify(playlists));
+    localStorage.setItem(KEY, JSON.stringify(playlists.map((p) => ({ ...p, tracks: p.tracks.map(storedTrack) }))));
   } catch {
     // Quota exceeded — keep running with in-memory playlists.
   }

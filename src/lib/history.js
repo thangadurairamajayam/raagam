@@ -1,3 +1,5 @@
+import { storedTrack, resolveTrack } from "./playerState.js";
+
 // Recently played, persisted between sessions.
 //
 // Only streamable tracks are stored with a usable src: a local file's blob URL
@@ -24,17 +26,7 @@ const write = (key, value) => {
   }
 };
 
-const slim = (track) => ({
-  id: track.id,
-  title: track.title,
-  artist: track.artist,
-  album: track.album,
-  cover: track.cover,
-  duration: track.duration,
-  source: track.source,
-  live: Boolean(track.live),
-  src: track.source === "local" ? null : track.src,
-});
+const slim = storedTrack;
 
 export const loadRecent = () => read(RECENT_KEY, []);
 
@@ -66,6 +58,5 @@ export const clearResume = () => write(RESUME_KEY, null);
 
 /** A stored entry is playable if it streams, or if the file is loaded again. */
 export function resolveRecent(entry, tracks) {
-  if (entry.src) return entry;
-  return tracks.find((t) => t.id === entry.id) || null;
+  return resolveTrack(entry, tracks);
 }

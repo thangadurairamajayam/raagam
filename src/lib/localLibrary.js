@@ -82,7 +82,9 @@ export async function buildLocalTracks(files, onProgress) {
       .find((v) => v && !isJunkArtist(v) && v !== "Unknown");
 
     tracks.push({
-      id: `local:${path}:${i}`,
+      id: `local:${path}:${file.size}:${file.lastModified}`,
+      filePath: path,
+      fileKey: `${path}:${file.size}:${file.lastModified}`,
       title,
       artist: artist || "Unknown artist",
       album,
