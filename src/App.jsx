@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback, createContext, useContext } from "react";
-import { Play, Pause, SkipBack, SkipForward, Heart, Search, Home, Volume2, VolumeX, Music2, Disc3, UserRound, Tags, FolderPlus, Globe, Loader2, ArrowLeft, ShieldCheck, ShieldAlert, Clapperboard, RadioTower, Shuffle, Repeat, Repeat1, ListMusic, Plus, Trash2, ListPlus, Youtube, KeyRound, Share2, Download, Film, History, Moon, Mic, Rss, ChevronDown, ChevronUp, Server, LogOut, MoreHorizontal } from "lucide-react";
+import { Play, Pause, SkipBack, SkipForward, Heart, Search, Home, Volume2, VolumeX, Music2, Disc3, UserRound, Tags, FolderPlus, Globe, Loader2, ArrowLeft, ShieldCheck, ShieldAlert, Clapperboard, RadioTower, Shuffle, Repeat, Repeat1, ListMusic, Plus, Trash2, ListPlus, Share2, Download, History, Moon, Mic, Rss, ChevronDown, ChevronUp, Server, LogOut, MoreHorizontal } from "lucide-react";
 
 import { pickLocalFiles, buildLocalTracks } from "./lib/localLibrary.js";
 import {
@@ -19,16 +19,11 @@ import {
   loadPlaylists, createPlaylist, addToPlaylist, removeFromPlaylist, deletePlaylist,
   exportPlaylist, importPlaylistFile,
 } from "./lib/playlists.js";
-import {
-  parseYouTubeId, fetchVideoInfo, searchYouTube, loadIframeApi, getApiKey, setApiKey,
-  youtubeSearchUrl, hasSharedKey,
-} from "./lib/youtube.js";
 import { lookupCover } from "./lib/coverArt.js";
 import { fetchLyrics, activeLineAt } from "./lib/lyrics.js";
 import { dominantColour } from "./lib/colour.js";
-import { ACTOR_NAMES, DIRECTOR_NAMES } from "./lib/metadata.js";
-import { FILMS, DECADES, decadeOf, filmsBy, soundtrackQuery, STORES } from "./lib/films.js";
-import { searchNormalise } from "./lib/tamil.js";
+import { ACTOR_NAMES } from "./lib/metadata.js";
+import { saveDeviceTracks, loadDeviceTracks, removeDeviceTrack, releaseDeviceTracks } from "./lib/deviceLibrary.js";
 import {
   loadRecent, pushRecent, clearRecent, saveResume, loadResume, clearResume,
 } from "./lib/history.js";
@@ -402,13 +397,6 @@ const STYLES = `
 }
 .sur-sheet-item:hover { background: var(--surface-2); }
 
-.sur-yt-wrap { margin: 4px 0 8px; }
-.sur-yt-frame {
-  position: relative; width: 100%; max-width: 720px; aspect-ratio: 16 / 9;
-  border-radius: 12px; overflow: hidden; background: #000;
-}
-.sur-yt-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
-
 .sur-nav-foot { margin-top: auto; }
 .sur-bottomnav { display: none; }
 .sur-track-title { display: block; background: none; border: 0; color: inherit; font: inherit; font-size: 14px; font-weight: 600; padding: 0; text-align: left; cursor: pointer; }
@@ -463,6 +451,7 @@ export default function SurMusicPlayer() {
   const [volume, setVolume] = useState(0.8);
   const liked = useMemo(() => new Set(favorites.map((t) => resolveTrack(t, tracks)?.id || t.id)), [favorites, tracks]);
   const [scan, setScan] = useState(null);
+  const [libraryLoading, setLibraryLoading] = useState(true);
   const [savedFolder, setSavedFolder] = useState(null);
   const [discoverQuery, setDiscoverQuery] = useState("");
   const [discoverResults, setDiscoverResults] = useState([]);
@@ -497,12 +486,6 @@ export default function SurMusicPlayer() {
   const [activePlaylist, setActivePlaylist] = useState(null);
   const [addingTrack, setAddingTrack] = useState(null);
   const [newPlaylistName, setNewPlaylistName] = useState("");
-  const [ytInput, setYtInput] = useState("");
-  const [ytVideo, setYtVideo] = useState(null);
-  const [ytResults, setYtResults] = useState([]);
-  const [ytKey, setYtKey] = useState(() => getApiKey());
-  const [ytBusy, setYtBusy] = useState(false);
-  const [filmDecade, setFilmDecade] = useState("");
   const [recent, setRecent] = useState(() => loadRecent());
   const [resume, setResume] = useState(() => loadResume());
   const [sleepMinutes, setSleepMinutes] = useState(0);
@@ -514,7 +497,6 @@ export default function SurMusicPlayer() {
   const playbackPosition = useRef(null);
   const shufflePlayed = useRef(new Set());
   const shuffleHistory = useRef([]);
-  const ytPlayerRef = useRef(null);
   const nativeHandlers = useRef({});
   const audioRef = useRef(null);
 
@@ -560,7 +542,7 @@ export default function SurMusicPlayer() {
       audio.load();
       if (isPlaying) {
         setIsPlaying(false);
-        setError("Reopen your music folder to play this saved song.");
+        setError("Add this song again to play it. It is not saved on this device.");
       }
       return;
     }
@@ -704,21 +686,56 @@ export default function SurMusicPlayer() {
     });
   }
 
-  async function importLocal() {
+  async function rememberLocal(files, parsed) {
+    addTracks(parsed);
+    try {
+      await saveDeviceTracks(files, parsed);
+      setNotice(`${parsed.length} song${parsed.length === 1 ? "" : "s"} saved on this device`);
+      navigator.storage?.persist?.().catch(() => {});
+    } catch {
+      setError("Songs can play now, but could not be saved on this device. Free some browser storage and import them again.");
+    }
+  }
+
+  useEffect(() => {
+    let active = true;
+    let loaded = [];
+    loadDeviceTracks().then((saved) => {
+      loaded = saved;
+      if (active) addTracks(saved);
+      else releaseDeviceTracks(saved);
+    }).catch(() => {
+      if (active) setError("Could not open saved music. You can still add songs for this session.");
+    }).finally(() => { if (active) setLibraryLoading(false); });
+    return () => { active = false; releaseDeviceTracks(loaded); };
+  }, []);
+
+  async function removeLocal(track) {
+    try {
+      await removeDeviceTrack(track.id);
+      if (current?.id === track.id) setIsPlaying(false);
+      setTracks((old) => old.filter((t) => t.id !== track.id));
+      setQueue((old) => old.map((t) => t.id === track.id ? storedTrack(t) : t));
+      setNotice("Removed from this device library. Your original file is unchanged.");
+      releaseDeviceTracks([track]);
+    } catch { setError("Could not remove the saved song. Please try again."); }
+  }
+
+  async function importLocal({ folder = true } = {}) {
     setError("");
     try {
       // A directory handle can be remembered; a plain file input cannot.
-      if (supportsPersistentFolder()) {
+      if (folder && supportsPersistentFolder()) {
         const handle = await pickFolder();
         await loadFromHandle(handle);
         return;
       }
-      const files = await pickLocalFiles({ folder: true });
+      const files = await pickLocalFiles({ folder });
       if (!files.length) return;
       setScan({ done: 0, total: files.length });
       const parsed = await buildLocalTracks(files, (done, total) => setScan({ done, total }));
-      addTracks(parsed);
-      setView("albums");
+      await rememberLocal(files, parsed);
+      setView("songs");
     } catch (e) {
       if (e.name !== "AbortError") setError(`Could not read those files: ${e.message}`);
     } finally {
@@ -741,9 +758,9 @@ export default function SurMusicPlayer() {
       }
       setScan({ done: 0, total: files.length });
       const parsed = await buildLocalTracks(files, (done, total) => setScan({ done, total }));
-      addTracks(parsed);
+      await rememberLocal(files, parsed);
       setSavedFolder(handle);
-      setView("albums");
+      setView("songs");
     } catch (e) {
       setError(`Could not read that folder: ${e.message}`);
     } finally {
@@ -946,80 +963,6 @@ export default function SurMusicPlayer() {
     return () => window.removeEventListener("keydown", onKey);
   }, [nowOpen]);
 
-  // The YouTube player owns playback while it's on screen, so silence ours.
-  useEffect(() => {
-    if (!ytVideo) return;
-    setIsPlaying(false);
-    let cancelled = false;
-    loadIframeApi().then((YT) => {
-      if (cancelled) return;
-      if (ytPlayerRef.current) {
-        ytPlayerRef.current.loadVideoById(ytVideo.id);
-        return;
-      }
-      ytPlayerRef.current = new YT.Player("sur-yt-player", {
-        videoId: ytVideo.id,
-        // origin must be passed or the API postMessages to the wrong target once a second.
-        playerVars: { rel: 0, playsinline: 1, enablejsapi: 1, origin: window.location.origin },
-        events: {
-          onStateChange: (e) => { if (e.data === YT.PlayerState.PLAYING) setIsPlaying(false); },
-        },
-      });
-    });
-    return () => { cancelled = true; };
-  }, [ytVideo?.id]);
-
-  // Leaving the YouTube tab must stop its audio, or two things play at once.
-  useEffect(() => {
-    if (view !== "youtube" && ytPlayerRef.current?.pauseVideo) {
-      try { ytPlayerRef.current.pauseVideo(); } catch { /* not ready */ }
-    }
-  }, [view]);
-
-  async function openYouTubeLink(value) {
-    const id = parseYouTubeId(value);
-    if (!id) {
-      setError("That doesn't look like a YouTube link or video id.");
-      return;
-    }
-    setYtBusy(true);
-    setError("");
-    try {
-      setYtVideo(await fetchVideoInfo(id));
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setYtBusy(false);
-    }
-  }
-
-  async function runYouTubeSearch(q) {
-    if (!ytKey && !hasSharedKey()) {
-      // Try the server proxy first — it may hold the key with none needed here.
-      setYtBusy(true);
-      try {
-        setYtResults(await searchYouTube(q, ""));
-        setError("");
-        return;
-      } catch {
-        window.open(youtubeSearchUrl(q), "_blank", "noopener");
-        setError("No search key or server proxy, so I opened YouTube in a new tab — copy a video link back here to play it.");
-        return;
-      } finally {
-        setYtBusy(false);
-      }
-    }
-    setYtBusy(true);
-    setError("");
-    try {
-      setYtResults(await searchYouTube(q, ytKey));
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setYtBusy(false);
-    }
-  }
-
   async function importPlaylist() {
     const input = document.createElement("input");
     input.type = "file";
@@ -1042,34 +985,6 @@ export default function SurMusicPlayer() {
     setError(skipped
       ? `Shared ${playlist.tracks.length - skipped} streamable songs. ${skipped} local file${skipped === 1 ? "" : "s"} left out — only you have those.`
       : "");
-  }
-
-  /** Films you already own play locally; the rest fall back to YouTube. */
-  const ownedAlbums = useMemo(() => {
-    const map = new Map();
-    for (const album of library.albums) map.set(searchNormalise(album.name), album);
-    return map;
-  }, [library.albums]);
-
-  const ownedFilm = (film) => ownedAlbums.get(searchNormalise(film.title)) || null;
-
-  function openFilm(film) {
-    const owned = ownedFilm(film);
-    if (owned) {
-      playFrom(owned.tracks, 0);
-      setSelected({ kind: "album", name: owned.name });
-      setView("albums");
-      return;
-    }
-    playFilmSoundtrack(film);
-  }
-
-  /** Films are commercial: send the user to the official upload on YouTube. */
-  function playFilmSoundtrack(film) {
-    const query = soundtrackQuery(film);
-    setYtInput(query);
-    setView("youtube");
-    runYouTubeSearch(query);
   }
 
   function playRecent(entry) {
@@ -1100,11 +1015,10 @@ export default function SurMusicPlayer() {
 
   function playFrom(list, index) {
     const track = resolveTrack(list[index], tracks);
-    if (!track) { setError("Reopen your music folder to play this song."); return; }
+    if (!track) { setError("Add this song again to play it. It is not saved on this device."); return; }
     pendingSeek.current = null;
     shufflePlayed.current = new Set([index]);
     shuffleHistory.current = [];
-    ytPlayerRef.current?.pauseVideo?.();
     setQueue(list.map((t) => resolveTrack(t, tracks) || t));
     setCurrentIndex(index);
     setError("");
@@ -1114,7 +1028,7 @@ export default function SurMusicPlayer() {
 
   function enqueue(track, next = false) {
     const resolved = resolveTrack(track, tracks);
-    if (!resolved) { setError("Reopen your music folder before adding this song."); return; }
+    if (!resolved) { setError("Add this song to your device library first."); return; }
     setQueue((old) => {
       const copy = [...old];
       copy.splice(next && currentIndex !== null ? currentIndex + 1 : copy.length, 0, resolved);
@@ -1155,9 +1069,8 @@ export default function SurMusicPlayer() {
 
   function togglePlay() {
     if (!current) return;
-    if (!resolveTrack(current, tracks)) { setError("Reopen your music folder to play this saved song."); return; }
+    if (!resolveTrack(current, tracks)) { setError("Add this song again to play it. It is not saved on this device."); return; }
     setError("");
-    if (!isPlaying) ytPlayerRef.current?.pauseVideo?.();
     setIsPlaying((p) => !p);
   }
 
@@ -1246,31 +1159,15 @@ export default function SurMusicPlayer() {
   const searchResults = useMemo(
     () => searchEverything(query, {
       tracks,
-      films: FILMS,
-      directors: DIRECTOR_NAMES,
-      actors: ACTOR_NAMES,
+      directors: library.directors.map((c) => c.name),
+      actors: library.actors.map((c) => c.name),
     }),
-    [tracks, query]
+    [tracks, library, query]
   );
   const likedTracks = useMemo(() => favorites.map((t) => resolveTrack(t, tracks) || t), [tracks, favorites]);
   const favoriteAlbums = useMemo(() => buildLibrary(likedTracks).albums, [likedTracks]);
 
-  // Known names are listed even with nothing loaded, so the browse dimensions are
-  // never dead ends — an empty one offers to search the streaming sources instead.
-  const withKnownNames = (collections, names, kind) => {
-    const present = new Set(collections.map((c) => c.name));
-    const extras = names
-      .filter((n) => !present.has(n))
-      .map((n) => ({ kind, name: n, tracks: [], count: 0, cover: null, subtitle: "Search online" }));
-    return [...collections, ...extras];
-  };
-
-  const collectionsFor = {
-    albums: library.albums,
-    directors: withKnownNames(library.directors, DIRECTOR_NAMES, "director"),
-    actors: withKnownNames(library.actors, ACTOR_NAMES, "actor"),
-    genres: library.genres,
-  };
+  const collectionsFor = library;
   const activeCollection = selected
     ? collectionsFor[selected.kind === "album" ? "albums"
       : selected.kind === "director" ? "directors"
@@ -1281,7 +1178,7 @@ export default function SurMusicPlayer() {
   const isEmpty = tracks.length === 0;
 
   return (
-    <TrackActions.Provider value={{ enqueue, onAdd: setAddingTrack }}>
+    <TrackActions.Provider value={{ enqueue, onAdd: setAddingTrack, removeLocal }}>
     <div className="sur-root">
       <style>{STYLES}</style>
       <audio
@@ -1314,53 +1211,15 @@ export default function SurMusicPlayer() {
           <button className={`sur-navbtn ${view === "search" ? "active" : ""}`} onClick={() => setView("search")}>
             <Search size={17} /> <span>Search</span>
           </button>
-          <button className={`sur-navbtn ${view === "discover" ? "active" : ""}`} onClick={() => { setView("discover"); setSelected(null); }}>
-            <Globe size={17} /> <span>Discover</span>
+          <button className={`sur-navbtn ${view === "library" ? "active" : ""}`} onClick={() => { setView("library"); setSelected(null); }}>
+            <ListMusic size={17} /> <span>My library</span>
           </button>
           <button className={`sur-navbtn ${view === "radio" ? "active" : ""}`} onClick={() => { setView("radio"); setSelected(null); }}>
             <RadioTower size={17} /> <span>Tamil Radio</span>
           </button>
-          <button className={`sur-navbtn ${view === "podcasts" ? "active" : ""}`} onClick={() => { setView("podcasts"); setSelected(null); setOpenShow(null); }}>
-            <Mic size={17} /> <span>Podcasts</span>
-          </button>
-          <button className={`sur-navbtn ${view === "server" ? "active" : ""}`} onClick={() => { setView("server"); setSelected(null); }}>
-            <Server size={17} /> <span>My Server</span>
-          </button>
-          <button className={`sur-navbtn ${view === "youtube" ? "active" : ""}`} onClick={() => { setView("youtube"); setSelected(null); }}>
-            <Youtube size={17} /> <span>YouTube</span>
-          </button>
-        </nav>
-        <div className="sur-genres">
-          <div className="sur-genres-label">Browse</div>
-        </div>
-        <nav className="sur-nav">
-          <button className={`sur-navbtn ${view === "albums" ? "active" : ""}`} title="Albums" onClick={() => { setView("albums"); setSelected(null); }}>
-            <Disc3 size={17} /> <span>Albums ({library.albums.length})</span>
-          </button>
-          <button className={`sur-navbtn ${view === "movies" ? "active" : ""}`} title="Movies" onClick={() => { setView("movies"); setSelected(null); }}>
-            <Film size={17} /> <span>Movies ({FILMS.length})</span>
-          </button>
-          <button className={`sur-navbtn ${view === "directors" ? "active" : ""}`} title="Music Directors" onClick={() => { setView("directors"); setSelected(null); }}>
-            <UserRound size={17} /> <span>Music Directors ({library.directors.length})</span>
-          </button>
-          <button className={`sur-navbtn ${view === "actors" ? "active" : ""}`} title="Actors" onClick={() => { setView("actors"); setSelected(null); }}>
-            <Clapperboard size={17} /> <span>Actors ({library.actors.length})</span>
-          </button>
-          <button className={`sur-navbtn ${view === "genres" ? "active" : ""}`} title="Genres" onClick={() => { setView("genres"); setSelected(null); }}>
-            <Tags size={17} /> <span>Genres ({library.genres.length})</span>
-          </button>
-          <button className={`sur-navbtn ${view === "liked" ? "active" : ""}`} title="Liked" onClick={() => { setView("liked"); setSelected(null); }}>
-            <Heart size={17} /> <span>Liked ({liked.size})</span>
-          </button>
-          <button className={`sur-navbtn ${view === "playlists" ? "active" : ""}`} title="Playlists" onClick={() => { setView("playlists"); setActivePlaylist(null); }}>
-            <ListMusic size={17} /> <span>Playlists ({playlists.length})</span>
-          </button>
-          <button className={`sur-navbtn ${view === "queue" ? "active" : ""}`} title="Up Next" onClick={() => setView("queue")}>
-            <ListPlus size={17} /> <span>Up Next ({queue.length})</span>
-          </button>
         </nav>
         <nav className="sur-nav sur-nav-foot">
-          <button className="sur-navbtn" title="Add my music folder" onClick={importLocal} disabled={!!scan}>
+          <button className="sur-navbtn" title="Add songs" onClick={() => importLocal({ folder: false })} disabled={!!scan || libraryLoading}>
             {scan ? <Loader2 size={17} className="sur-spin-icon" /> : <FolderPlus size={17} />}
             <span>{scan ? "Scanning…" : "Add my music"}</span>
           </button>
@@ -1385,35 +1244,48 @@ export default function SurMusicPlayer() {
         {notice && <p className="sur-notice" role="status">{notice}</p>}
         {buffering && <p className="sur-progress" role="status"><Loader2 size={14} className="sur-spin-icon" /> Buffering…</p>}
 
+        {view === "songs" && <>
+          <h1 className="sur-heading sur-display">My songs</h1>
+          <p className="sur-subtext">{tracks.length} songs in your library</p>
+          <div className="sur-actions">
+            <button className="sur-btn primary" onClick={() => importLocal({ folder: false })} disabled={!!scan || libraryLoading}><Plus size={16} /> Add songs</button>
+            <button className="sur-btn" onClick={() => importLocal()} disabled={!!scan || libraryLoading}><FolderPlus size={16} /> Add music folder</button>
+          </div>
+          {isEmpty ? <p className="sur-empty">Add song files to start listening.</p> :
+            <TrackList tracks={tracks} onPlay={(idx) => playFrom(tracks, idx)} currentId={current?.id} isPlaying={isPlaying}
+              liked={liked} onToggleLike={toggleLike} onAdd={setAddingTrack} />}
+        </>}
         {view === "library" && <>
           <h1 className="sur-heading sur-display">Your library</h1>
           <p className="sur-subtext">Your music, your playlists. No subscription.</p>
           <div className="sur-sources">
-            {[["Liked songs", "liked", Heart], ["Albums", "albums", Disc3], ["Playlists", "playlists", ListMusic],
+            {[["All songs", "songs", Music2], ["Liked songs", "liked", Heart], ["Albums", "albums", Disc3], ["Playlists", "playlists", ListMusic],
               ["Up next", "queue", ListPlus], ["Music directors", "directors", UserRound], ["Actors", "actors", Clapperboard],
-              ["Genres", "genres", Tags], ["Movies", "movies", Film], ["Free music", "discover", Globe],
-              ["Tamil radio", "radio", RadioTower], ["Podcasts", "podcasts", Mic], ["My server", "server", Server],
-              ["YouTube", "youtube", Youtube]].map(([label, target, Icon]) =>
+              ["Genres", "genres", Tags], ["Free music", "discover", Globe],
+              ["Tamil radio", "radio", RadioTower], ["Podcasts", "podcasts", Mic], ["My server", "server", Server]].map(([label, target, Icon]) =>
                 <button key={target} className="sur-source" onClick={() => {
                   setView(target); setSelected(null); setActivePlaylist(null); setOpenShow(null);
                 }}><Icon size={22} /><span className="t">{label}</span></button>)}
           </div>
-          <button className="sur-btn primary" onClick={importLocal} disabled={!!scan}><FolderPlus size={16} /> Add my music</button>
+          <button className="sur-btn primary" onClick={importLocal} disabled={!!scan || libraryLoading}><FolderPlus size={16} /> Add my music</button>
         </>}
+        {libraryLoading && <p className="sur-progress" role="status">Opening your music…</p>}
         {scan && <p className="sur-progress">Reading tags… {scan.done} / {scan.total}</p>}
 
         {view === "home" && (
           <>
             <h1 className="sur-heading sur-display">Welcome back</h1>
             <p className="sur-subtext">
-              {isEmpty ? "Add your own songs, or browse free Tamil audio." : `${tracks.length} songs in your library.`}
+              {isEmpty ? "Add your songs or tune in to Tamil radio." : `${tracks.length} songs ready to play.`}
             </p>
             <div className="sur-actions">
-              <button className="sur-btn primary" onClick={importLocal} disabled={!!scan}>                {scan ? <Loader2 size={16} className="sur-spin-icon" /> : <FolderPlus size={16} />}
-                {scan ? "Scanning…" : "Add my music folder"}
+              <button className="sur-btn primary" onClick={() => importLocal({ folder: false })} disabled={!!scan || libraryLoading}><Plus size={16} /> Add songs</button>
+              <button className="sur-btn" onClick={importLocal} disabled={!!scan || libraryLoading}>
+                {scan ? <Loader2 size={16} className="sur-spin-icon" /> : <FolderPlus size={16} />}
+                {scan ? "Scanning…" : "Add music folder"}
               </button>
               {savedFolder && isEmpty && (
-                <button className="sur-btn" onClick={() => loadFromHandle(savedFolder)} disabled={!!scan}>
+                <button className="sur-btn" onClick={() => loadFromHandle(savedFolder)} disabled={!!scan || libraryLoading}>
                   <FolderPlus size={16} /> Reopen “{savedFolder.name}”
                 </button>
               )}
@@ -1426,10 +1298,13 @@ export default function SurMusicPlayer() {
                   <Trash2 size={16} /> Forget folder
                 </button>
               )}
-              <button className="sur-btn" onClick={() => setView("discover")}>
-                <Globe size={16} /> Browse free Tamil audio
+              <button className="sur-btn" onClick={() => setView("songs")}>My songs</button>
+              <button className="sur-btn" onClick={() => setView("radio")}>
+                <RadioTower size={16} /> Listen to Tamil radio
               </button>
             </div>
+            <p className="sur-note">Imported songs are stored on this device and reopen automatically. Nothing is uploaded.
+              Browser storage uses device space; clearing site data removes these copies.</p>
             {isEmpty && (
               <p className="sur-note">
                 Your files stay on this device — nothing is uploaded. Album, music director and
@@ -1500,13 +1375,11 @@ export default function SurMusicPlayer() {
                 <span className="t">{playlist.name}</span><span className="a">{playlist.tracks.length} songs</span></button>)}</div>
             </div>}
             <div className="sur-section">
-              <div className="sur-section-title"><h2>Where the music comes from</h2></div>              <div className="sur-sources">
+              <div className="sur-section-title"><h2>Start listening</h2></div>
+              <div className="sur-sources">
                 {[
                   { icon: FolderPlus, name: "My music", music: "Whatever you own", keep: "Yours to keep", go: importLocal },
-                  { icon: Server, name: "My Server", music: "Your own library, ad-free", keep: "Yours to keep", go: () => setView("server") },
-                  { icon: Globe, name: "Discover", music: "Free-licensed only", keep: "Yours to keep", go: () => setView("discover") },
                   { icon: RadioTower, name: "Tamil Radio", music: "Current hits, live", keep: "Listen only", go: () => setView("radio") },
-                  { icon: Youtube, name: "YouTube", music: "Everything, incl. BGM", keep: "Listen only", go: () => setView("youtube") },
                 ].map((s) => (
                   <button className="sur-source" key={s.name} onClick={s.go}>
                     <s.icon size={18} />
@@ -1517,9 +1390,8 @@ export default function SurMusicPlayer() {
                 ))}
               </div>
               <p className="sur-note">
-                Commercial film music — Yuvan, Anirudh, Silambarasan, BGMs — is licensed, so it
-                streams from Radio and YouTube (where ads and broadcast fees pay the artists)
-                rather than being downloadable. Discover only carries music that is genuinely free.
+                Add your song files once and listen from your device library. Radio stations stream live;
+                the music and any advertisements come from the station.
               </p>
             </div>
             {!isEmpty && (
@@ -1556,24 +1428,6 @@ export default function SurMusicPlayer() {
               </div>
               {activeCollection.tracks.length === 0 ? (
                 <>
-                  {filmsBy(selected.kind === "director"
-                    ? { music: activeCollection.name }
-                    : { actor: activeCollection.name }).length > 0 && (
-                    <>
-                      <p className="sur-chips-label">Soundtracks by {activeCollection.name}</p>
-                      <div className="sur-grid" style={{ marginBottom: 20 }}>
-                        {filmsBy(selected.kind === "director"
-                          ? { music: activeCollection.name }
-                          : { actor: activeCollection.name }).map((film) => (
-                          <div className="sur-tile" key={`${film.title}-${film.year}`} onClick={() => playFilmSoundtrack(film)}>
-                            <div className="sur-tile-art"><Cover seed={film.title} size={24} /></div>
-                            <p className="sur-tile-title">{film.title}</p>
-                            <p className="sur-tile-sub">{film.year} · {selected.kind === "director" ? film.actor : film.music}</p>
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  )}
                   <p className="sur-empty" style={{ padding: "6px 0" }}>
                     Nothing by {activeCollection.name} in your library yet.
                   </p>
@@ -1588,21 +1442,7 @@ export default function SurMusicPlayer() {
                     >
                       <Globe size={16} /> Look in Discover
                     </button>
-                    <button
-                      className="sur-btn primary"
-                      onClick={() => {
-                        setYtInput(`${activeCollection.name} songs`);
-                        setView("youtube");
-                        runYouTubeSearch(`${activeCollection.name} songs`);
-                      }}
-                    >
-                      <Youtube size={16} /> Find on YouTube
-                    </button>
                   </div>
-                  <p className="sur-note">
-                    Commercial film music rarely appears in Discover — YouTube is where
-                    {" "}{activeCollection.name}'s catalogue actually lives.
-                  </p>
                 </>
               ) : (
                 <>
@@ -1641,7 +1481,7 @@ export default function SurMusicPlayer() {
               </h1>
               <p className="sur-subtext">
                 {view === "directors" || view === "actors"
-                  ? `${library[view].length} in your library · ${collectionsFor[view].length} browsable`
+                  ? `${library[view].length} in your library`
                   : `${collectionsFor[view].length} in your library`}
               </p>
               {isEmpty && view !== "directors" && view !== "actors" ? (
@@ -1662,7 +1502,7 @@ export default function SurMusicPlayer() {
           <>
             <h1 className="sur-heading sur-display">Search</h1>
             {query.trim() === "" && (
-              <p className="sur-empty">Search your songs, or any film, music director or actor.</p>
+              <p className="sur-empty">Search the songs, albums, music directors and actors in your library.</p>
             )}
             {query.trim() !== "" && searchResults.total === 0 && (
               <p className="sur-empty">No results for “{query}”.</p>
@@ -1680,27 +1520,6 @@ export default function SurMusicPlayer() {
                   onToggleLike={toggleLike}
                   onAdd={setAddingTrack}
                 />
-              </>
-            )}
-
-            {searchResults.films.length > 0 && (
-              <>
-                <p className="sur-chips-label">Movies ({searchResults.films.length})</p>
-                <div className="sur-grid" style={{ marginBottom: 22 }}>
-                  {searchResults.films.map((film) => {
-                    const owned = ownedFilm(film);
-                    return (
-                      <div className="sur-tile" key={`${film.title}-${film.year}`} onClick={() => openFilm(film)}>
-                        <div className="sur-tile-art"><Cover src={owned?.cover} seed={film.title} size={24} /></div>
-                        <p className="sur-tile-title">{film.title}</p>
-                        <p className="sur-tile-sub">{film.year} · {film.music}</p>
-                        <span className={`sur-badge ${owned ? "owned" : ""}`}>
-                          {owned ? `♪ ${owned.count} in library` : "YouTube"}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
               </>
             )}
 
@@ -2126,147 +1945,6 @@ export default function SurMusicPlayer() {
               </div>
             </>
           )
-        )}
-
-        {view === "youtube" && (
-          <>
-            <h1 className="sur-heading sur-display">YouTube</h1>
-            <p className="sur-subtext">Plays in YouTube's own player, so the labels get paid.</p>
-
-            <div className="sur-actions">
-              <div className="sur-searchwrap">
-                <Youtube size={15} />
-                <input
-                  placeholder="Paste a YouTube link, or search if a key is set"
-                  value={ytInput}
-                  onChange={(e) => setYtInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key !== "Enter") return;
-                    parseYouTubeId(ytInput) ? openYouTubeLink(ytInput) : runYouTubeSearch(ytInput);
-                  }}
-                />
-              </div>
-              <button
-                className="sur-btn primary"
-                disabled={ytBusy || !ytInput.trim()}
-                onClick={() => (parseYouTubeId(ytInput) ? openYouTubeLink(ytInput) : runYouTubeSearch(ytInput))}
-              >
-                {ytBusy ? <Loader2 size={16} className="sur-spin-icon" /> : <Play size={16} />}
-                {parseYouTubeId(ytInput) ? "Play" : ytKey ? "Search" : "Search on YouTube"}
-              </button>
-            </div>
-
-            <div className="sur-yt-wrap" style={{ display: ytVideo ? "block" : "none" }}>
-              <div className="sur-yt-frame"><div id="sur-yt-player" /></div>
-              {ytVideo && (
-                <p className="sur-subtext" style={{ marginTop: 10 }}>
-                  <strong>{ytVideo.title}</strong> · {ytVideo.channel}
-                </p>
-              )}
-            </div>
-
-            {ytResults.length > 0 && (
-              <div className="sur-grid" style={{ marginTop: 18 }}>
-                {ytResults.map((v) => (
-                  <div className="sur-tile" key={v.id} onClick={() => setYtVideo(v)}>
-                    <div className="sur-tile-art">
-                      <Cover src={v.thumbnail} seed={v.title} size={24} />
-                    </div>
-                    <p className="sur-tile-title">{v.title}</p>
-                    <p className="sur-tile-sub">{v.channel}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <p className="sur-note" style={{ marginTop: 22 }}>
-              The video stays visible on purpose: YouTube's terms require their player be shown,
-              and forbid extracting or downloading the audio. Played this way, every view is
-              counted and monetised for the rights-holder — which is what keeps this legal.
-            </p>
-
-            <p className="sur-chips-label">In-app search (optional)</p>
-            <div className="sur-actions">
-              <div className="sur-searchwrap">
-                <KeyRound size={15} />
-                <input
-                  type="password"
-                  placeholder="YouTube Data API key — stored only on this device"
-                  value={ytKey}
-                  onChange={(e) => setYtKey(e.target.value)}
-                />
-              </div>
-              <button
-                className="sur-btn"
-                onClick={() => { setApiKey(ytKey); setError(ytKey.trim() ? "Key saved — try searching now." : "Key cleared."); }}
-              >
-                Save key
-              </button>
-            </div>
-            <p className="sur-note">
-              Pasting links never needs a key. For in-app search, the safest setup is the
-              included serverless proxy: set <strong>YOUTUBE_API_KEY</strong> in your host's
-              environment and the key stays on the server, never in this page. A key typed
-              below is stored on this device only — and a key built into the bundle is
-              readable by anyone who opens it.
-            </p>
-          </>
-        )}
-
-        {view === "movies" && (
-          <>
-            <h1 className="sur-heading sur-display">Movies</h1>
-            <p className="sur-subtext">Tamil soundtracks — pick one to hear it on YouTube.</p>
-            <div className="sur-chips">
-              <button className={`sur-chip ${filmDecade === "" ? "active" : ""}`} onClick={() => setFilmDecade("")}>
-                All
-              </button>
-              {DECADES.map((d) => (
-                <button key={d} className={`sur-chip ${filmDecade === d ? "active" : ""}`} onClick={() => setFilmDecade(d)}>
-                  {d}
-                </button>
-              ))}
-            </div>
-            <p className="sur-note">
-              Owned soundtracks play from your library as audio. The rest open the official
-              upload on YouTube — that's video, so it uses roughly five times the data of an
-              audio file. Buying an album is a one-off: the files are yours, play offline at
-              no data cost, and turn gold here. Background scores were usually never released
-              commercially, so those stay YouTube-only.
-            </p>
-            <div className="sur-grid">
-              {filmsBy({ decade: filmDecade }).map((film) => {
-                const owned = ownedFilm(film);
-                return (
-                  <div className="sur-tile" key={`${film.title}-${film.year}`} onClick={() => openFilm(film)}>
-                    <div className="sur-tile-art">
-                      <Cover src={owned?.cover} seed={film.title} size={26} />
-                    </div>
-                    <p className="sur-tile-title">{film.title}</p>
-                    <p className="sur-tile-sub">{film.year} · {film.music}</p>
-                    <span className={`sur-badge ${owned ? "owned" : ""}`}>
-                      {owned ? `♪ ${owned.count} in library` : "YouTube"}
-                    </span>
-                    {!owned && (
-                      <span className="sur-buy">
-                        {STORES.map((store) => (
-                          <a
-                            key={store.name}
-                            href={store.url(film)}
-                            target="_blank"
-                            rel="noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            {store.name}
-                          </a>
-                        ))}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </>
         )}
 
         {view === "liked" && (          <>
@@ -2701,6 +2379,7 @@ function TrackList({ tracks, onPlay, currentId, isPlaying, liked, onToggleLike, 
                   <button onClick={(e) => { actions?.enqueue(t, true); e.currentTarget.closest("details").open = false; }}>Play next</button>
                   <button onClick={(e) => { actions?.enqueue(t); e.currentTarget.closest("details").open = false; }}>Add to queue</button>
                   <button onClick={(e) => { (onAdd || actions?.onAdd)?.(t); e.currentTarget.closest("details").open = false; }}>Add to playlist</button>
+                  {t.source === "local" && <button onClick={(e) => { actions?.removeLocal(t); e.currentTarget.closest("details").open = false; }}>Remove from device library</button>}
                 </div>
               </details>
               {onMove && <>

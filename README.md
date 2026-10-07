@@ -1,174 +1,60 @@
-# sur. — Music Player (Capacitor project)
+# Raagam
 
-A Capacitor-wrapped version of the sur. music player MVP, ready to build for Android and iOS.
+A personal music player with an on-device library and Tamil radio. No account,
+subscription, or app-inserted advertisements are required for local playback.
+Radio streams may contain the station's own advertisements.
 
-## What's inside
-- Listener controls: every song has Play next / Add to queue; Up Next supports
-  drag reordering, move buttons, removal, clearing, and saving as a playlist.
-- Favorites and the queue are remembered on this device. Playback restores paused;
-  local files reconnect when the same folder is reopened. Stored data contains
-  metadata rather than session-only audio or artwork blob URLs.
-- Mobile navigation uses Home, Search, and Library. Library includes all music
-  sources; Home includes recent listening, favorites, and your playlists.
-- Playback shows buffering and retry feedback. Shuffle visits each queue entry
-  before repeating; Previous restarts the current song after three seconds.
-- `src/App.jsx` — the player UI (browse, search, playback)
-- `src/lib/localLibrary.js` — reads your own music files + ID3 tags
-- `src/lib/archive.js` — Internet Archive search/streaming
-- `src/lib/metadata.js` — music-director / album / genre resolution
-- `src/lib/grouping.js` — groups tracks into albums, directors, genres
-- `dist/` — pre-built web assets (already run once, committed so you can sync immediately)
-- `android/` — native Android Studio project (generated, ready to open)
-- `ios/` — native Xcode project (generated; needs `pod install` on a Mac before it opens cleanly)
-- `capacitor.config.json` — app id, name, and web asset folder
+## Add and listen to your songs
 
-## Where the music comes from
+1. Open Home and choose **Add songs** or **Add music folder**.
+2. Select audio files from your computer or phone. On browsers without folder
+   selection, use **Add songs** to select individual files.
+3. Imported songs appear in **My songs**, ready to play. Albums, favorites,
+   playlists, search, and the listening queue are available in **My library**.
 
-### Building a subscription-free player
+The app copies imported audio and embedded artwork into this browser's IndexedDB
+storage. Songs automatically reopen on this device; they are never uploaded.
+Importing another folder adds to the library. Removing a song from its options
+menu deletes the app's stored copy and leaves the original file unchanged.
+Keep your original files: clearing site data, private browsing, or browser storage
+cleanup can remove the stored copies. Storage limits depend on your device and
+browser; failed saves show a message and still allow playback for that session.
+Different browsers and devices have separate libraries.
 
-The player can stay free to use: begin with personal local files, a user's own
-Subsonic server, and music whose rights holders allow the intended use. Local
-playback needs neither an account nor a hosted audio catalog. Netlify serves the
-app and API functions; it does not supply a licensed commercial music catalog.
+After the production app has loaded online and installed its offline cache,
+the app and saved songs can open offline. Radio and other external sources need
+an internet connection. YouTube playback, search, movie previews, and their API
+functions have been removed.
 
-For a public catalog, partner with independent artists and obtain permission
-covering both recordings and compositions, territories, and any offline copies.
-Keep license and attribution details with each release. An Archive license label
-is uploaded metadata, so verify permissions before rehosting a recording.
-Hosting and licensing still cost money; donations, sponsorships, optional paid
-extras, or advertising can fund a player without a listener subscription.
+## Other library options
 
-YouTube stays a visible embedded video source. Its developer policies do not
-allow extracting audio, unauthorized downloads, or a hidden/background player.
-It is not a route to an unrestricted, ad-free commercial audio catalog.
+Tamil radio retains the existing stations and playback controls. Optional
+Internet Archive discovery, podcasts, and a Subsonic-compatible personal server
+remain accessible from My library. Use files and streams you have permission to
+access; importing files does not grant redistribution rights.
 
-References: [YouTube developer policies](https://developers.google.com/youtube/terms/developer-policies)
-and [recording/composition rights](https://www.copyright.gov/register/pa-sr.html).
+## Development and deployment
 
-**1. Your own files** ("Add my music folder" on Home). Pick a folder; the app reads
-ID3 tags in the browser and groups the songs. Nothing is uploaded and no network is
-used. Blob URLs are per-session, so re-pick the folder after a restart.
-
-**2. Internet Archive** ("Discover"). Publicly hosted Tamil audio, browsable by category:
-Everything, Songs, Film & Movie, Jukebox & Hits, Devotional, Carnatic & Vocal,
-Folk & Gaana, Instrumental, BGM & Themes, OST.
-
-**3. Your own server** ("My Server"). Any Subsonic-compatible server — Navidrome,
-Airsonic, Gonic, or Jellyfin with its Subsonic plugin. Ad-free, works from every
-device, and legal because the server holds music you own. Quick start:
-
-```bash
-docker run -d --name navidrome -p 4533:4533 \
-  -e ND_ENABLECORS=true \
-  -v /path/to/your/music:/music:ro \
-  -v ./navidrome-data:/data \
-  deluan/navidrome:latest
-```
-
-Create the admin user at `http://localhost:4533`, then enter that address plus the
-username and password under "My Server". Notes:
-
-- `ND_ENABLECORS=true` is required — the browser blocks the API without it.
-- An https-served app cannot stream from an `http://` server (mixed content). For
-  remote access put the server behind https via a reverse proxy or Tailscale.
-- The password is salted and hashed before storage; only the Subsonic token is
-  kept on the device.
-
-Approximate catalogue sizes (live Archive counts):
-
-| category | items | with a free licence |
-| --- | --- | --- |
-| all Tamil audio | ~15,800 | ~1,570 |
-| songs | ~2,200 | — |
-| film / movie | ~71 | **9** |
-| devotional / folk / jukebox | ~130–150 each | — |
-| Carnatic & vocal | ~112 | — |
-| instrumental | ~41 | — |
-| BGM & themes | ~14 | — |
-| OST | ~10 | — |
-
-### On licensed music
-Current commercial Tamil film music (Sony Music South, Think Music, Saregama and so on)
-is **not** free, and this app deliberately has no scraper for JioSaavn/Gaana/YouTube.
-Those routes are copyright infringement, get apps rejected from both stores, and break
-constantly. To play music you own, use "Add my music folder".
-
-This is also why **BGM and OST are nearly empty** — background scores are exactly the
-material studios license, so they aren't legally free anywhere.
-
-### The "Free-licensed only" toggle — on by default
-Archive.org items are user uploads and their copyright status varies. Discover starts in
-**Free-licensed only** mode: results are restricted to items carrying an explicit Creative
-Commons or public-domain licence (`licenseurl`), and every tile shows which licence it is
-(Public Domain, CC BY, CC BY-NC-ND …). Turning it off shows unverified uploads and is
-deliberately styled as a warning.
-
-`-NC` licences forbid commercial use and `-ND` forbids derivatives — both fine for
-listening yourself and with friends.
-
-### Why "free Tamil movie albums" barely exist
-Filtered to a verifiable free licence, the whole Archive returns **9** Tamil film/movie
-items — and most are lectures or interviews, not albums. Roughly three are real Tamil film
-music. The other ~60 film items are unverified uploads of commercial soundtracks.
-
-This isn't a limitation of the app's search. Commercial Tamil film music is licensed, full
-stop; there is no legitimate free source for it. For those albums, buy them and use
-"Add my music folder" — album / music-director / genre browsing works identically on your
-own files.
-
-### Sharing with friends
-- Sharing **the app** is fine — it's your code.
-- Discover **streams from archive.org**; it never copies or re-hosts audio, so each
-  listener fetches from the source. That is materially safer than passing files around.
-- Sharing **your own ripped MP3s** with friends is redistribution and is not made legal
-  by doing it through this app.
-
-## How music director is worked out
-ID3 has no music-director field, so `src/lib/metadata.js` resolves it in this order:
-1. `composer` tag — but a comma-separated list is treated as playback singers, not a director
-2. a known director matched anywhere in artist/album/title, fuzzy enough to absorb
-   misspellings ("Yuvan Shnakar Raja" → Yuvan Shankar Raja) and short forms ("Yuvan hits")
-3. bracketed or trailing-dash names in the album ("Ayan (Harris Jayaraj)")
-4. otherwise `Unknown`
-
-Add names to `KNOWN_DIRECTORS` / `ALIASES` in that file to improve grouping.
-
-## Prerequisites (install once, on your own machine)
-- Node.js 18+ and npm
-- **For Android:** Android Studio (includes the Android SDK)
-- **For iOS:** a Mac with Xcode + CocoaPods (`sudo gem install cocoapods`) — Apple requires macOS for iOS builds, there's no way around this
-
-## First-time setup
 ```bash
 npm install
+npm run dev
+npm test
+npm run build
+npm run preview
 ```
 
-## Everyday workflow
-Whenever you change `src/App.jsx` (or any file in `src/`):
+Netlify builds the app with `npm test && npm run build` and publishes `dist`.
+Local music and radio need no API keys. Docker is optional and is not required
+for the Netlify deployment.
+
+## Native apps
+
+The Capacitor projects are in `android/` and `ios/`.
 
 ```bash
-npm run cap:android   # builds the web app, syncs it into android/, opens Android Studio
-npm run cap:ios        # builds the web app, syncs it into ios/, opens Xcode
+npm run cap:android
+npm run cap:ios
 ```
 
-These two scripts do three things automatically: `vite build` → `npx cap sync` → open the native IDE.
-
-## Android — build & run
-1. `npm run cap:android` (opens Android Studio)
-2. Let Gradle finish syncing (first time takes a few minutes)
-3. Plug in a phone (USB debugging on) or start an emulator
-4. Press ▶ Run
-
-To publish: Android Studio → Build > Generate Signed App Bundle, then upload the `.aab` to the Google Play Console ($25 one-time registration fee).
-
-## iOS — build & run
-1. On a Mac, run `cd ios/App && pod install` (only needed once, or after adding plugins)
-2. `npm run cap:ios` (opens Xcode)
-3. Select your device/simulator, press ▶ Run
-4. You'll need an Apple Developer account ($99/yr) to run on a physical device or publish to the App Store
-
-## Notes
-- Audio, likes, search, and playback all work as-is inside the native shell — it's the same React app, just running in a native WebView instead of a browser tab.
-- On Android, "Add my music folder" opens the system file picker. iOS WebView restricts
-  directory picking — select files individually there, or use the Files app.
-- App icon/splash screen are still Capacitor defaults — see https://capacitorjs.com/docs/guides/splash-screens-and-icons to brand them.
+These commands build and sync the web assets, then open Android Studio or Xcode.
+Native file picking and audio behavior should also be checked on physical devices.

@@ -1,10 +1,4 @@
-// A starting shelf of well-known Tamil soundtracks.
-//
-// These are commercial releases, so the audio isn't free anywhere — the app
-// can't host them. What it can do is take you straight to them on YouTube,
-// where the labels publish officially and get paid per play.
-//
-// Add your own rows freely: { title, year, music, actor }.
+// Tamil soundtrack metadata used by search regression tests.
 
 export const FILMS = [
   // 1980s
@@ -200,19 +194,3 @@ export function filmsBy({ decade = "", music = "", actor = "" } = {}) {
     (!actor || f.actor === actor)
   ).sort((a, b) => a.year - b.year);
 }
-
-/** What to type into YouTube to get the soundtrack rather than the film. */
-export const soundtrackQuery = (film) => `${film.title} ${film.year} full songs jukebox`;
-
-// Buying is the only way to own commercial film music. These open a store search
-// rather than a product page, since catalogue ids change and albums get reissued.
-export const STORES = [
-  {
-    name: "Apple Music",
-    url: (f) => `https://music.apple.com/in/search?term=${encodeURIComponent(`${f.title} ${f.music}`)}`,
-  },
-  {
-    name: "Amazon",
-    url: (f) => `https://www.amazon.in/s?k=${encodeURIComponent(`${f.title} tamil soundtrack cd`)}`,
-  },
-];
