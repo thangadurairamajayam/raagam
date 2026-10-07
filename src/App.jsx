@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback, createContext, useContext } from "react";
-import { Play, Pause, SkipBack, SkipForward, Heart, Search, Home, Volume2, VolumeX, Music2, Disc3, UserRound, Tags, FolderPlus, Globe, Loader2, ArrowLeft, ShieldCheck, ShieldAlert, Clapperboard, RadioTower, Shuffle, Repeat, Repeat1, ListMusic, Plus, Trash2, ListPlus, Share2, Download, History, Moon, Mic, Rss, ChevronDown, ChevronUp, Server, LogOut, MoreHorizontal } from "lucide-react";
+import { Play, Pause, SkipBack, SkipForward, Heart, Search, Home, Volume2, VolumeX, Music2, Disc3, UserRound, Tags, FolderPlus, Globe, Loader2, ArrowLeft, ShieldCheck, ShieldAlert, Clapperboard, RadioTower, Shuffle, Repeat, Repeat1, ListMusic, Plus, Trash2, ListPlus, Share2, Download, History, Moon, Mic, Rss, ChevronDown, ChevronUp, Server, KeyRound, LogOut, MoreHorizontal } from "lucide-react";
 
 import { pickLocalFiles, buildLocalTracks } from "./lib/localLibrary.js";
 import {
